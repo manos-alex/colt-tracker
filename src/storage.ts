@@ -1,4 +1,4 @@
-import type { AppData, Event, Game, Player } from "./types";
+import type { AppData, Event, Game, Player, Point } from "./types";
 
 const STORAGE_KEY = "colt-tracker-poc";
 
@@ -25,6 +25,7 @@ export function loadData(): AppData {
       ...parsed,
       players: parsed.players.map(normalizePlayer),
       games: parsed.games.map(normalizeGame),
+      points: parsed.points.map(normalizePoint),
       events: parsed.events.map(normalizeEvent),
     };
   } catch {
@@ -44,17 +45,37 @@ function normalizePlayer(player: Player): Player {
 }
 
 function normalizeGame(game: Game): Game {
+  const hasStartingPossession = Object.prototype.hasOwnProperty.call(game, "startingPossession");
+  const hasStartingEndzone = Object.prototype.hasOwnProperty.call(game, "startingEndzone");
+  const hasSecondHalfStarted = Object.prototype.hasOwnProperty.call(game, "secondHalfStarted");
+  const hasGameFinished = Object.prototype.hasOwnProperty.call(game, "gameFinished");
+
   return {
     ...game,
+    startingPossession: hasStartingPossession ? game.startingPossession : game.currentPossession,
+    startingEndzone: hasStartingEndzone ? game.startingEndzone : "left",
+    secondHalfStarted: hasSecondHalfStarted ? Boolean(game.secondHalfStarted) : false,
+    gameFinished: hasGameFinished ? Boolean(game.gameFinished) : false,
     activeThrowerId: game.activeThrowerId ?? null,
     discX: game.discX ?? null,
     discY: game.discY ?? null,
   };
 }
 
+function normalizePoint(point: Point): Point {
+  return {
+    ...point,
+    initialThrowerId: point.initialThrowerId ?? null,
+    initialDiscX: point.initialDiscX ?? null,
+    initialDiscY: point.initialDiscY ?? null,
+  };
+}
+
 function normalizeEvent(event: Event): Event {
   return {
     ...event,
+    pointId: event.pointId ?? null,
+    half: event.half ?? 1,
     startX: event.startX ?? null,
     startY: event.startY ?? null,
     endX: event.endX ?? null,

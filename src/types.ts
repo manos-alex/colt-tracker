@@ -3,6 +3,8 @@ export type Id = string;
 export type Possession = "us" | "opponent";
 export type ScoringTeam = Possession;
 export type PointStatus = "active" | "complete";
+export type EndzoneSide = "left" | "right";
+export type EventHalf = 1 | 2;
 export type FieldCoordinate = {
   x: number;
   y: number;
@@ -17,7 +19,10 @@ export type EventType =
   | "opponent_turnover"
   | "opponent_score"
   | "callahan"
-  | "injury";
+  | "injury"
+  | "pickup"
+  | "half_time"
+  | "full_time";
 
 export type Player = {
   id: Id;
@@ -53,6 +58,10 @@ export type Game = {
   ourScore: number;
   opponentScore: number;
   currentPossession: Possession;
+  startingPossession: Possession | null;
+  startingEndzone: EndzoneSide | null;
+  secondHalfStarted: boolean;
+  gameFinished: boolean;
   activeThrowerId: Id | null;
   discX: number | null;
   discY: number | null;
@@ -70,6 +79,9 @@ export type Point = {
   ourScoreEnd: number | null;
   opponentScoreEnd: number | null;
   scoringTeam: ScoringTeam | null;
+  initialThrowerId: Id | null;
+  initialDiscX: number | null;
+  initialDiscY: number | null;
   status: PointStatus;
   createdAt: string;
   updatedAt: string;
@@ -86,8 +98,9 @@ export type PointPlayer = {
 export type Event = {
   id: Id;
   gameId: Id;
-  pointId: Id;
+  pointId: Id | null;
   eventType: EventType;
+  half: EventHalf;
   playerId: Id | null;
   secondaryPlayerId: Id | null;
   startX: number | null;

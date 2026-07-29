@@ -19,6 +19,8 @@ declare global {
 
   type YouTubePlayer = {
     getCurrentTime: () => number;
+    seekTo: (seconds: number, allowSeekAhead: boolean) => void;
+    pauseVideo: () => void;
     destroy: () => void;
   };
 }
