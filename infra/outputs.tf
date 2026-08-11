@@ -18,9 +18,24 @@ output "api_endpoint" {
   value       = aws_apigatewayv2_api.api.api_endpoint
 }
 
+output "aws_region" {
+  description = "AWS region for this environment."
+  value       = var.aws_region
+}
+
+output "database_cluster_arn" {
+  description = "Aurora PostgreSQL cluster ARN for Data API calls."
+  value       = aws_rds_cluster.database.arn
+}
+
 output "database_endpoint" {
   description = "Aurora PostgreSQL writer endpoint."
   value       = aws_rds_cluster.database.endpoint
+}
+
+output "database_name" {
+  description = "PostgreSQL database name."
+  value       = var.database_name
 }
 
 output "database_secret_arn" {

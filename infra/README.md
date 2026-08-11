@@ -59,3 +59,4 @@ The Lambda currently responds to `/health` and returns `404` for other routes. R
 `lambda-placeholder` with the real TypeScript backend packaging path once the API is implemented.
 
 See `deployment.md` for dev/prod deployment guidance, security notes, and API/database boundaries.
+See `local-dev.md` for connecting local backend development to the deployed dev database.
