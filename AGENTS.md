@@ -4,7 +4,8 @@
 
 Build a React/TypeScript app for charting and analyzing one ultimate frisbee team's stats from YouTube game film.
 
-This is currently a frontend proof of concept. The long-term plan is:
+This is currently a frontend app with transient in-memory state while cloud persistence is being
+built. The long-term plan is:
 
 - React + TypeScript frontend.
 - Serverless backend later.
@@ -15,7 +16,8 @@ This is currently a frontend proof of concept. The long-term plan is:
 
 ## Current App Shape
 
-The app is Vite + React + TypeScript and uses `localStorage` for temporary persistence.
+The app is Vite + React + TypeScript. Browser persistence has been removed; data currently resets on
+refresh until the backend API and PostgreSQL layer are connected.
 
 Main commands:
 
@@ -41,10 +43,15 @@ Current frontend types represent the future database tables:
 - `players`
 - `tournaments`
 - `tournament_players`
+- `tournament_schedule_items`
 - `games`
 - `points`
 - `point_players`
 - `events`
+
+Read `docs/architecture.md` before backend, database, Terraform, or AWS infrastructure work. It
+captures the planned AWS/PostgreSQL direction and the event extensibility guidance for future stats
+and recordables.
 
 There will always be one team, so do not add a `teams` table unless the user explicitly changes direction.
 
@@ -52,7 +59,11 @@ Important table notes:
 
 - `players` uses one display `name`, not first/last/nickname/number.
 - `games` are always YouTube, so no `video_source`.
+- `tournament_schedule_items` represent tournament day/order and include both games and byes.
 - `events` include video timestamps and normalized field coordinates where relevant.
+- For future Postgres work, keep `events` as the source of truth and prefer typed event payloads or
+  event-specific detail tables for recordable-specific fields instead of adding a fixed column for
+  every new stat detail.
 - Pass coordinates are normalized `x`/`y` from `0` to `1`; dashboard/stat views can convert later to yards on a 110 yd x 40 yd field.
 - The field is 20 yd end zone, 70 yd playing field, 20 yd end zone.
 
@@ -112,13 +123,13 @@ Event log:
 
 ## Near-Term Direction
 
-The current priority is still getting the frontend PoC workflow right.
+The current priority is moving the frontend workflow toward a cloud-backed application.
 
 Likely next steps:
 
 - Continue refining stat-entry speed and correctness.
 - Add edit/delete/undo for mistaken events.
 - Add basic game summary stats once event definitions settle.
-- Then turn the TypeScript types into a real Postgres schema.
-- Then add a TypeScript API/backend and replace `localStorage`.
-- Auth, AWS, and Terraform come after the core charting workflow is stable.
+- Confirm the Postgres schema before creating SQL tables.
+- Add a TypeScript API/backend and connect the frontend to it.
+- Auth/whitelist can wait until after the core workflow and data model are stable.

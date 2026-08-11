@@ -10,6 +10,7 @@ export type FieldCoordinate = {
   y: number;
 };
 export type EventType =
+  | "pull"
   | "pass"
   | "turnover"
   | "throwaway"
@@ -38,6 +39,7 @@ export type Tournament = {
   location: string;
   startDate: string;
   endDate: string;
+  dayCount: number;
   createdAt: string;
   updatedAt: string;
 };
@@ -47,6 +49,20 @@ export type TournamentPlayer = {
   tournamentId: Id;
   playerId: Id;
   createdAt: string;
+};
+
+export type TournamentScheduleItemType = "game" | "bye";
+
+export type TournamentScheduleItem = {
+  id: Id;
+  tournamentId: Id;
+  type: TournamentScheduleItemType;
+  gameId: Id | null;
+  label: string | null;
+  dayNumber: number;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type Game = {
@@ -107,6 +123,8 @@ export type Event = {
   startY: number | null;
   endX: number | null;
   endY: number | null;
+  pullHangTimeSeconds: number | null;
+  pullInBounds: boolean | null;
   videoSeconds: number;
   createdAt: string;
 };
@@ -115,6 +133,7 @@ export type AppData = {
   players: Player[];
   tournaments: Tournament[];
   tournamentPlayers: TournamentPlayer[];
+  tournamentScheduleItems: TournamentScheduleItem[];
   games: Game[];
   points: Point[];
   pointPlayers: PointPlayer[];

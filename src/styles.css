@@ -288,6 +288,17 @@ p {
   align-items: center;
 }
 
+.schedule-game-form {
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr) auto auto;
+}
+
+.form-context {
+  color: #43566b;
+  font-size: 13px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
 .list-action-row {
   display: flex;
   align-items: center;
@@ -305,6 +316,90 @@ p {
 .selection-list {
   display: grid;
   gap: 8px;
+}
+
+.tournament-schedule {
+  display: grid;
+  gap: 18px;
+}
+
+.schedule-day {
+  display: grid;
+  gap: 10px;
+  border: 2px dashed transparent;
+  border-radius: 8px;
+  padding: 8px;
+  margin: -8px;
+  transition:
+    border-color 140ms ease,
+    background-color 140ms ease;
+}
+
+.schedule-day.is-drop-target {
+  border-color: #9db5c9;
+  background: #f8fbfd;
+}
+
+.schedule-day h3 {
+  margin: 0;
+  color: #1f3246;
+  font-size: 16px;
+  font-weight: 900;
+}
+
+.schedule-day-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.schedule-actions {
+  display: grid;
+  grid-template-columns: 4fr 1fr;
+  gap: 8px;
+}
+
+.schedule-row {
+  cursor: grab;
+}
+
+.schedule-row.is-editing {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  cursor: default;
+}
+
+.schedule-row:active {
+  cursor: grabbing;
+}
+
+.schedule-row.is-dragging {
+  border-color: #1677c5;
+  opacity: 0.82;
+  box-shadow: 0 8px 20px rgba(35, 52, 71, 0.18);
+}
+
+.bye-row {
+  border-color: #d8dee9;
+  background: #f4f6f8;
+}
+
+.bye-row b {
+  background: #e8edf2;
+}
+
+.schedule-remove-button {
+  min-height: 30px;
+  border: 1px solid #e2b5b1;
+  background: #fff6f5;
+  color: #9f241c;
+  padding: 0 9px;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.add-day-button {
+  justify-self: start;
 }
 
 .selection-row {
@@ -1003,6 +1098,29 @@ p {
 
 .button-grid button {
   min-height: 46px;
+}
+
+.pull-timer-panel {
+  display: grid;
+  place-items: center;
+  min-height: 92px;
+  border: 1px solid #dbe4ec;
+  border-radius: 8px;
+  background: #f6f9fb;
+}
+
+.pull-timer-panel strong {
+  color: #1f3246;
+  font-size: 36px;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.pull-timer-panel span {
+  color: #60748a;
+  font-size: 13px;
+  font-weight: 850;
 }
 
 .field-picker-shell {

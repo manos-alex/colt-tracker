@@ -1,14 +1,17 @@
 # colt-tracker
 
-React/TypeScript proof of concept for charting one ultimate frisbee team's stats from YouTube film.
+React/TypeScript app for charting one ultimate frisbee team's stats from YouTube film.
 
-## PoC
+## Current State
 
-The frontend currently uses `localStorage` as a temporary repository layer. The important future database tables are represented as TypeScript types:
+The frontend currently keeps data in React state while the API and PostgreSQL persistence layer are
+being built. Refreshing the browser resets local session data. The important future database tables
+are represented as TypeScript types:
 
 - `players`: one `name` field for display and references, plus `roster_player` for whether the player is on the core roster.
 - `tournaments`
 - `tournament_players`
+- `tournament_schedule_items`: tournament day/order entries for both games and byes.
 - `games`: YouTube URL, opponent, score, current possession, active thrower, and current disc spot.
 - `points`: point number, start/end score, starting offense/defense, scoring team.
 - `point_players`: players on the point, with `is_starter` for original seven vs subs.
@@ -30,3 +33,8 @@ npm install
 npm run dev
 npm run build
 ```
+
+## Architecture
+
+See [docs/architecture.md](docs/architecture.md) for the planned AWS/PostgreSQL direction, future
+database tables, and guidance for keeping events extensible as new stats and recordables are added.
