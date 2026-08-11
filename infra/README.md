@@ -13,11 +13,28 @@ infrastructure; migrations create and evolve database tables.
 
 ## Commands
 
+Bootstrap the remote state resources once per AWS account:
+
 ```sh
+cd infra/bootstrap
 terraform init
+terraform apply
+```
+
+Then write backend config files from the bootstrap output:
+
+```sh
+cd ..
+./scripts/write-backend-configs.sh "$(terraform -chdir=bootstrap output -raw state_bucket_name)"
+```
+
+Initialize the app infrastructure against the dev state:
+
+```sh
+terraform init -backend-config=backend/dev.hcl
 terraform fmt -recursive
 terraform validate
-terraform plan
+terraform plan -var-file=environments/dev.tfvars
 ```
 
 Use environment-specific variables for plans:
@@ -25,6 +42,14 @@ Use environment-specific variables for plans:
 ```sh
 terraform plan -var-file=environments/dev.tfvars
 terraform plan -var-file=environments/prod.tfvars
+```
+
+After applying infrastructure, run database migrations through the migration runner Lambda:
+
+```sh
+aws lambda invoke \
+  --function-name "$(terraform output -raw migration_runner_function_name)" \
+  /tmp/colt-tracker-migrations.json
 ```
 
 After a frontend build, upload `../dist` to the `frontend_bucket_name` output. The CloudFront

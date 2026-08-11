@@ -221,6 +221,7 @@ resource "aws_rds_cluster" "database" {
   cluster_identifier              = "${local.name_prefix}-postgres"
   engine                          = "aurora-postgresql"
   database_name                   = var.database_name
+  enable_http_endpoint            = var.database_enable_data_api
   master_username                 = var.database_master_username
   manage_master_user_password     = true
   db_subnet_group_name            = aws_db_subnet_group.database.name
@@ -233,8 +234,9 @@ resource "aws_rds_cluster" "database" {
   enabled_cloudwatch_logs_exports = ["postgresql"]
 
   serverlessv2_scaling_configuration {
-    min_capacity = var.database_min_capacity
-    max_capacity = var.database_max_capacity
+    min_capacity             = var.database_min_capacity
+    max_capacity             = var.database_max_capacity
+    seconds_until_auto_pause = var.database_min_capacity == 0 ? var.database_seconds_until_auto_pause : null
   }
 }
 
@@ -250,6 +252,21 @@ data "archive_file" "api_lambda" {
   type        = "zip"
   source_dir  = "${path.module}/lambda-placeholder"
   output_path = "${path.module}/.terraform-build/api-placeholder.zip"
+}
+
+data "archive_file" "migration_runner" {
+  type        = "zip"
+  output_path = "${path.module}/.terraform-build/migration-runner.zip"
+
+  source {
+    content  = file("${path.module}/migration-runner/index.mjs")
+    filename = "index.mjs"
+  }
+
+  source {
+    content  = file("${path.module}/migrations/001_initial_schema.sql")
+    filename = "migrations/001_initial_schema.sql"
+  }
 }
 
 resource "aws_iam_role" "api_lambda" {
@@ -298,14 +315,15 @@ resource "aws_cloudwatch_log_group" "api_lambda" {
 }
 
 resource "aws_lambda_function" "api" {
-  function_name    = "${local.name_prefix}-api"
-  role             = aws_iam_role.api_lambda.arn
-  handler          = "index.handler"
-  runtime          = var.lambda_runtime
-  filename         = data.archive_file.api_lambda.output_path
-  source_code_hash = data.archive_file.api_lambda.output_base64sha256
-  timeout          = 15
-  memory_size      = 256
+  function_name                  = "${local.name_prefix}-api"
+  role                           = aws_iam_role.api_lambda.arn
+  handler                        = "index.handler"
+  runtime                        = var.lambda_runtime
+  filename                       = data.archive_file.api_lambda.output_path
+  source_code_hash               = data.archive_file.api_lambda.output_base64sha256
+  timeout                        = 15
+  memory_size                    = 256
+  reserved_concurrent_executions = var.api_lambda_reserved_concurrency
 
   environment {
     variables = {
@@ -360,6 +378,11 @@ resource "aws_apigatewayv2_stage" "api_default" {
   api_id      = aws_apigatewayv2_api.api.id
   name        = "$default"
   auto_deploy = true
+
+  default_route_settings {
+    throttling_burst_limit = var.api_throttling_burst_limit
+    throttling_rate_limit  = var.api_throttling_rate_limit
+  }
 }
 
 resource "aws_lambda_permission" "api_gateway" {
@@ -368,4 +391,81 @@ resource "aws_lambda_permission" "api_gateway" {
   function_name = aws_lambda_function.api.function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.api.execution_arn}/*/*"
+}
+
+resource "aws_iam_role" "migration_runner" {
+  name = "${local.name_prefix}-migration-runner"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "lambda.amazonaws.com"
+        }
+      },
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "migration_runner_basic" {
+  role       = aws_iam_role.migration_runner.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+data "aws_iam_policy_document" "migration_runner_database" {
+  statement {
+    actions = [
+      "rds-data:BatchExecuteStatement",
+      "rds-data:BeginTransaction",
+      "rds-data:CommitTransaction",
+      "rds-data:ExecuteStatement",
+      "rds-data:RollbackTransaction",
+    ]
+    resources = [aws_rds_cluster.database.arn]
+  }
+
+  statement {
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [aws_rds_cluster.database.master_user_secret[0].secret_arn]
+  }
+}
+
+resource "aws_iam_role_policy" "migration_runner_database" {
+  name   = "${local.name_prefix}-migration-runner-database"
+  role   = aws_iam_role.migration_runner.id
+  policy = data.aws_iam_policy_document.migration_runner_database.json
+}
+
+resource "aws_cloudwatch_log_group" "migration_runner" {
+  name              = "/aws/lambda/${local.name_prefix}-migration-runner"
+  retention_in_days = 14
+}
+
+resource "aws_lambda_function" "migration_runner" {
+  function_name    = "${local.name_prefix}-migration-runner"
+  role             = aws_iam_role.migration_runner.arn
+  handler          = "index.handler"
+  runtime          = var.lambda_runtime
+  filename         = data.archive_file.migration_runner.output_path
+  source_code_hash = data.archive_file.migration_runner.output_base64sha256
+  timeout          = 120
+  memory_size      = 256
+
+  environment {
+    variables = {
+      DB_CLUSTER_ARN = aws_rds_cluster.database.arn
+      DB_NAME        = var.database_name
+      DB_SECRET_ARN  = aws_rds_cluster.database.master_user_secret[0].secret_arn
+    }
+  }
+
+  depends_on = [
+    aws_cloudwatch_log_group.migration_runner,
+    aws_iam_role_policy_attachment.migration_runner_basic,
+    aws_iam_role_policy.migration_runner_database,
+    aws_rds_cluster_instance.database,
+  ]
 }

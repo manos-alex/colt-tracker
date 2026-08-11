@@ -1,5 +1,9 @@
-environment                  = "dev"
-database_deletion_protection = false
-database_min_capacity        = 0.5
-database_max_capacity        = 2
-api_cors_allowed_origins     = ["*"]
+environment                       = "dev"
+api_lambda_reserved_concurrency   = null
+api_throttling_burst_limit        = 10
+api_throttling_rate_limit         = 5
+database_deletion_protection      = false
+database_min_capacity             = 0
+database_max_capacity             = 1
+database_seconds_until_auto_pause = 300
+api_cors_allowed_origins          = ["*"]

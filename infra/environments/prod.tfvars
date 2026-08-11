@@ -1,5 +1,8 @@
-environment                  = "prod"
-database_deletion_protection = true
-database_min_capacity        = 0.5
-database_max_capacity        = 4
-api_cors_allowed_origins     = ["https://REPLACE_WITH_PROD_FRONTEND_DOMAIN"]
+environment                     = "prod"
+api_lambda_reserved_concurrency = 20
+api_throttling_burst_limit      = 100
+api_throttling_rate_limit       = 50
+database_deletion_protection    = true
+database_min_capacity           = 0.5
+database_max_capacity           = 4
+api_cors_allowed_origins        = ["https://REPLACE_WITH_PROD_FRONTEND_DOMAIN"]

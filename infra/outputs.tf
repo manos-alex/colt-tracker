@@ -28,3 +28,8 @@ output "database_secret_arn" {
   value       = aws_rds_cluster.database.master_user_secret[0].secret_arn
   sensitive   = true
 }
+
+output "migration_runner_function_name" {
+  description = "Lambda function name used to apply database migrations."
+  value       = aws_lambda_function.migration_runner.function_name
+}

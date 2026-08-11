@@ -12,16 +12,28 @@ Recommended flow:
 - `prod`: deploy only from CI/CD after review, build, tests, Terraform validation, and a reviewed
   plan.
 
+Dev sets Aurora minimum capacity to `0` with a 5-minute auto-pause window to reduce idle database
+compute cost. Prod keeps a nonzero minimum capacity by default. Dev also uses API Gateway
+throttling as the first API cost guardrail. Lambda reserved concurrency is disabled in dev by
+default because new AWS accounts can have a low regional concurrency quota that must leave 10
+executions unreserved.
+
 The `environment` variable is part of resource names and tags. Use the provided tfvars files as
 starting points:
 
 ```sh
+terraform init -backend-config=backend/dev.hcl
 terraform plan -var-file=environments/dev.tfvars
+
+terraform init -reconfigure -backend-config=backend/prod.hcl
 terraform plan -var-file=environments/prod.tfvars
 ```
 
-Do not share one Terraform state file between dev and prod. A remote backend should be added before
-real use, typically an S3 state bucket with DynamoDB locking.
+Do not share one Terraform state file between dev and prod. The `bootstrap` stack creates the S3
+state bucket and DynamoDB lock table. The app stack then uses separate backend config files:
+
+- `backend/dev.hcl`: `dev/terraform.tfstate`
+- `backend/prod.hcl`: `prod/terraform.tfstate`
 
 ## Security
 
@@ -42,6 +54,7 @@ Security items still needed before production:
 - Add remote Terraform state with locking.
 - Add CI checks for build, tests, Terraform fmt, Terraform validate, and reviewed plans.
 - Decide whether production deploys require manual approval.
+- Bundle Lambda dependencies during backend packaging instead of relying on runtime-included SDKs.
 
 ## API And Database Responsibilities
 
@@ -59,3 +72,67 @@ The intended request flow is:
 Do not have Lambda functions create or mutate table structure during normal application requests.
 Use migrations for schema changes, run as a separate deployment step before code that depends on the
 new schema.
+
+## Manual Dev Deployment
+
+Use this flow for the first dev deployment.
+
+First create the Terraform-managed deploy role with admin or IAM Identity Center credentials:
+
+```sh
+cd infra/iam-bootstrap
+cp terraform.tfvars.example terraform.tfvars
+# Edit terraform.tfvars and set trusted_principal_arns.
+terraform init
+terraform apply
+```
+
+Configure an AWS CLI profile that assumes the output `dev_deploy_role_arn`, then use that profile
+for the remaining commands:
+
+```sh
+export AWS_PROFILE=colt-dev-deploy
+
+cd infra/bootstrap
+terraform init
+terraform apply
+
+cd ..
+./scripts/write-backend-configs.sh "$(terraform -chdir=bootstrap output -raw state_bucket_name)"
+terraform init -backend-config=backend/dev.hcl
+terraform plan -var-file=environments/dev.tfvars
+terraform apply -var-file=environments/dev.tfvars
+
+aws lambda invoke \
+  --function-name "$(terraform output -raw migration_runner_function_name)" \
+  /tmp/colt-tracker-migrations.json
+```
+
+The migration runner uses Aurora's Data API so the database can stay private. The current Node.js
+Lambda runtime includes AWS SDK v3, which is enough for this initial runner. When the real backend
+packaging is added, bundle Lambda dependencies explicitly for repeatable builds.
+
+Then build and publish the frontend:
+
+```sh
+cd ..
+npm run build
+aws s3 sync dist/ "s3://$(terraform -chdir=infra output -raw frontend_bucket_name)" --delete
+aws cloudfront create-invalidation \
+  --distribution-id "$(terraform -chdir=infra output -raw frontend_cloudfront_distribution_id)" \
+  --paths "/*"
+```
+
+## Prod CI/CD Shape
+
+Production should use the same Terraform code but initialize with `backend/prod.hcl` and
+`environments/prod.tfvars`. The CI workflow should:
+
+1. Build and test the frontend/backend.
+2. Run `terraform fmt -check -recursive`.
+3. Run `terraform validate`.
+4. Create a prod plan using `backend/prod.hcl` and `environments/prod.tfvars`.
+5. Wait for manual approval.
+6. Apply the reviewed plan.
+7. Invoke the migration runner.
+8. Upload frontend assets and invalidate the prod CloudFront distribution.

@@ -34,6 +34,25 @@ variable "lambda_runtime" {
   default     = "nodejs22.x"
 }
 
+variable "api_lambda_reserved_concurrency" {
+  description = "Reserved concurrency limit for the API Lambda. Set null when the account concurrency quota is too low to reserve capacity."
+  type        = number
+  default     = null
+  nullable    = true
+}
+
+variable "api_throttling_burst_limit" {
+  description = "HTTP API burst request limit for the default stage."
+  type        = number
+  default     = 10
+}
+
+variable "api_throttling_rate_limit" {
+  description = "HTTP API steady-state requests per second limit for the default stage."
+  type        = number
+  default     = 5
+}
+
 variable "database_name" {
   description = "Initial PostgreSQL database name."
   type        = string
@@ -62,4 +81,16 @@ variable "database_max_capacity" {
   description = "Aurora Serverless v2 maximum ACUs."
   type        = number
   default     = 2
+}
+
+variable "database_seconds_until_auto_pause" {
+  description = "Seconds of inactivity before Aurora Serverless pauses when minimum capacity is 0."
+  type        = number
+  default     = 300
+}
+
+variable "database_enable_data_api" {
+  description = "Whether to enable the Aurora Data API for controlled operational tasks like migrations."
+  type        = bool
+  default     = true
 }
