@@ -1,11 +1,18 @@
 import { Dispatch, FormEvent, SetStateAction, useState } from "react";
+import {
+  createTournamentBye,
+  createTournamentGame,
+  deleteTournamentDay,
+  deleteTournamentScheduleItem,
+  moveTournamentScheduleItem,
+  selectRosteredTournamentPlayers,
+  toggleTournamentPlayer as toggleApiTournamentPlayer,
+  updateTournamentDayCount,
+} from "../lib/api";
 import { paths } from "../lib/routes";
-import type { AppData, Game, Id, Tournament, TournamentPlayer, TournamentScheduleItem } from "../types";
+import type { AppData, Id, Tournament, TournamentScheduleItem } from "../types";
 
 type DataSetter = Dispatch<SetStateAction<AppData>>;
-
-const now = () => new Date().toISOString();
-const id = () => crypto.randomUUID();
 
 function TournamentPage({
   data,
@@ -57,55 +64,31 @@ function TournamentRosterPanel({
       .filter((item) => item.tournamentId === tournament.id)
       .map((item) => item.playerId),
   );
+  const [error, setError] = useState("");
 
-  const toggleTournamentPlayer = (playerId: Id) => {
-    setData((current) => {
-      const existing = current.tournamentPlayers.find(
-        (item) => item.tournamentId === tournament.id && item.playerId === playerId,
-      );
-
-      if (existing) {
-        return {
-          ...current,
-          tournamentPlayers: current.tournamentPlayers.filter((item) => item.id !== existing.id),
-        };
-      }
-
-      const tournamentPlayer: TournamentPlayer = {
-        id: id(),
-        tournamentId: tournament.id,
-        playerId,
-        createdAt: now(),
-      };
-
-      return {
-        ...current,
-        tournamentPlayers: [...current.tournamentPlayers, tournamentPlayer],
-      };
-    });
+  const toggleTournamentPlayer = async (playerId: Id) => {
+    setError("");
+    try {
+      const result = await toggleApiTournamentPlayer(tournament.id, playerId);
+      setData(result.data);
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : "Unable to update tournament roster.");
+    }
   };
 
-  const selectRosteredPlayers = () => {
-    const rosteredSelections = data.players
-      .filter((player) => player.rosterPlayer)
-      .map<TournamentPlayer>((player) => ({
-        id: id(),
-        tournamentId: tournament.id,
-        playerId: player.id,
-        createdAt: now(),
-      }));
-
-    setData((current) => ({
-      ...current,
-      tournamentPlayers: [
-        ...current.tournamentPlayers.filter((item) => item.tournamentId !== tournament.id),
-        ...rosteredSelections,
-      ],
-    }));
+  const selectRosteredPlayers = async () => {
+    setError("");
+    try {
+      const result = await selectRosteredTournamentPlayers(tournament.id);
+      setData(result.data);
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : "Unable to select rostered players.");
+    }
   };
 
   return (
     <section className="wide-panel">
+      {error && <p className="status-banner error">{error}</p>}
       <div className="detail-heading">
         <div>
           <strong>{tournament.name}</strong>
@@ -151,64 +134,36 @@ function TournamentGamesPanel({
   const [addingGameDay, setAddingGameDay] = useState<number | null>(null);
   const [draggedItemId, setDraggedItemId] = useState<Id | null>(null);
   const [isEditingSchedule, setIsEditingSchedule] = useState(false);
+  const [error, setError] = useState("");
 
   const scheduleItems = data.tournamentScheduleItems
     .filter((item) => item.tournamentId === tournament.id)
     .sort((a, b) => a.dayNumber - b.dayNumber || a.sortOrder - b.sortOrder);
   const dayCount = Math.max(1, tournament.dayCount, ...scheduleItems.map((item) => item.dayNumber));
-  const tournamentGames = data.games.filter((game) => game.tournamentId === tournament.id);
   const days = Array.from({ length: dayCount }, (_, index) => index + 1);
 
-  const nextSortOrderForDay = (dayNumber: number, items = scheduleItems) => {
-    const dayItems = items.filter((item) => item.dayNumber === dayNumber);
-    return dayItems.length ? Math.max(...dayItems.map((item) => item.sortOrder)) + 1 : 0;
-  };
-
-  const addGame = (event: FormEvent) => {
+  const addGame = async (event: FormEvent) => {
     event.preventDefault();
     if (!opponentName.trim() || addingGameDay === null) return;
 
-    const timestamp = now();
-    const game: Game = {
-      id: id(),
-      tournamentId: tournament.id,
-      opponentName: opponentName.trim(),
-      gameDate: "",
-      videoUrl: videoUrl.trim(),
-      ourScore: 0,
-      opponentScore: 0,
-      currentPossession: "us",
-      startingPossession: null,
-      startingEndzone: null,
-      secondHalfStarted: false,
-      gameFinished: false,
-      activeThrowerId: null,
-      discX: null,
-      discY: null,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    };
-    const scheduleItem: TournamentScheduleItem = {
-      id: id(),
-      tournamentId: tournament.id,
-      type: "game",
-      gameId: game.id,
-      label: null,
-      dayNumber: addingGameDay,
-      sortOrder: nextSortOrderForDay(addingGameDay),
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    };
-
-    setData((current) => ({
-      ...current,
-      games: [...current.games, game],
-      tournamentScheduleItems: [...current.tournamentScheduleItems, scheduleItem],
-    }));
-    setOpponentName("");
-    setVideoUrl("");
-    setAddingGameDay(null);
-    navigate(paths.game(game.id));
+    setError("");
+    try {
+      const result = await createTournamentGame({
+        tournamentId: tournament.id,
+        opponentName: opponentName.trim(),
+        videoUrl: videoUrl.trim(),
+        dayNumber: addingGameDay,
+      });
+      setData(result.data);
+      setOpponentName("");
+      setVideoUrl("");
+      setAddingGameDay(null);
+      if (result.gameId) {
+        navigate(paths.game(result.gameId));
+      }
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : "Unable to add game.");
+    }
   };
 
   const cancelAddGame = () => {
@@ -217,117 +172,67 @@ function TournamentGamesPanel({
     setAddingGameDay(null);
   };
 
-  const addBye = (dayNumber: number) => {
-    const timestamp = now();
-    const scheduleItem: TournamentScheduleItem = {
-      id: id(),
-      tournamentId: tournament.id,
-      type: "bye",
-      gameId: null,
-      label: "Bye",
-      dayNumber,
-      sortOrder: nextSortOrderForDay(dayNumber),
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    };
-
-    setData((current) => ({
-      ...current,
-      tournamentScheduleItems: [...current.tournamentScheduleItems, scheduleItem],
-    }));
+  const addBye = async (dayNumber: number) => {
+    setError("");
+    try {
+      const result = await createTournamentBye(tournament.id, dayNumber);
+      setData(result.data);
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : "Unable to add bye.");
+    }
   };
 
-  const addDay = () => {
-    setData((current) => ({
-      ...current,
-      tournaments: current.tournaments.map((item) =>
-        item.id === tournament.id
-          ? { ...item, dayCount: dayCount + 1, updatedAt: now() }
-          : item,
-      ),
-    }));
+  const addDay = async () => {
+    setError("");
+    try {
+      const result = await updateTournamentDayCount(tournament.id, dayCount + 1);
+      setData(result.data);
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : "Unable to add day.");
+    }
   };
 
-  const moveScheduleItem = (draggedId: Id, targetDay: number, targetIndex: number) => {
-    setData((current) => {
-      const tournamentItems = current.tournamentScheduleItems
-        .filter((item) => item.tournamentId === tournament.id)
-        .sort((a, b) => a.dayNumber - b.dayNumber || a.sortOrder - b.sortOrder);
-      const draggedItem = tournamentItems.find((item) => item.id === draggedId);
-      if (!draggedItem) return current;
-
-      const remainingItems = tournamentItems.filter((item) => item.id !== draggedId);
-      const dayItems = remainingItems.filter((item) => item.dayNumber === targetDay);
-      const insertIndex = Math.min(Math.max(targetIndex, 0), dayItems.length);
-      const reorderedDayItems = [
-        ...dayItems.slice(0, insertIndex),
-        { ...draggedItem, dayNumber: targetDay },
-        ...dayItems.slice(insertIndex),
-      ].map((item, index) => ({ ...item, sortOrder: index, updatedAt: now() }));
-      const untouchedItems = remainingItems.filter((item) => item.dayNumber !== targetDay);
-      const daySortCounters = new Map<number, number>();
-      const nextTournamentItems = [...untouchedItems, ...reorderedDayItems]
-        .sort((a, b) => a.dayNumber - b.dayNumber || a.sortOrder - b.sortOrder)
-        .map((item) => {
-          const nextSortOrder = daySortCounters.get(item.dayNumber) ?? 0;
-          daySortCounters.set(item.dayNumber, nextSortOrder + 1);
-
-          return { ...item, sortOrder: nextSortOrder };
-        });
-
-      return {
-        ...current,
-        tournamentScheduleItems: [
-          ...current.tournamentScheduleItems.filter((item) => item.tournamentId !== tournament.id),
-          ...nextTournamentItems,
-        ],
-      };
-    });
+  const moveScheduleItem = async (draggedId: Id, targetDay: number, targetIndex: number) => {
+    setError("");
+    try {
+      const result = await moveTournamentScheduleItem({
+        tournamentId: tournament.id,
+        scheduleItemId: draggedId,
+        targetDay,
+        targetIndex,
+      });
+      setData(result.data);
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : "Unable to move schedule item.");
+    }
   };
 
-  const removeScheduleItem = (scheduleItem: TournamentScheduleItem) => {
-    setData((current) => {
-      const gameId = scheduleItem.gameId;
-      const removedGamePointIds = gameId
-        ? current.points.filter((point) => point.gameId === gameId).map((point) => point.id)
-        : [];
-
-      return {
-        ...current,
-        tournamentScheduleItems: current.tournamentScheduleItems.filter(
-          (item) => item.id !== scheduleItem.id,
-        ),
-        games: gameId ? current.games.filter((game) => game.id !== gameId) : current.games,
-        points: gameId ? current.points.filter((point) => point.gameId !== gameId) : current.points,
-        pointPlayers: gameId
-          ? current.pointPlayers.filter((item) => !removedGamePointIds.includes(item.pointId))
-          : current.pointPlayers,
-        events: gameId ? current.events.filter((event) => event.gameId !== gameId) : current.events,
-      };
-    });
+  const removeScheduleItem = async (scheduleItem: TournamentScheduleItem) => {
+    setError("");
+    try {
+      const result = await deleteTournamentScheduleItem(tournament.id, scheduleItem.id);
+      setData(result.data);
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : "Unable to remove schedule item.");
+    }
   };
 
-  const removeDay = (dayNumber: number) => {
+  const removeDay = async (dayNumber: number) => {
     const dayItems = scheduleItems.filter((item) => item.dayNumber === dayNumber);
     if (dayItems.length > 0 || dayCount <= 1) return;
 
-    setData((current) => ({
-      ...current,
-      tournaments: current.tournaments.map((item) =>
-        item.id === tournament.id
-          ? { ...item, dayCount: dayCount - 1, updatedAt: now() }
-          : item,
-      ),
-      tournamentScheduleItems: current.tournamentScheduleItems.map((item) =>
-        item.tournamentId === tournament.id && item.dayNumber > dayNumber
-          ? { ...item, dayNumber: item.dayNumber - 1, updatedAt: now() }
-          : item,
-      ),
-    }));
+    setError("");
+    try {
+      const result = await deleteTournamentDay(tournament.id, dayNumber);
+      setData(result.data);
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : "Unable to remove day.");
+    }
   };
 
   return (
     <section className="wide-panel">
+      {error && <p className="status-banner error">{error}</p>}
       <div className="panel-heading">
         <h2>Schedule</h2>
         <button

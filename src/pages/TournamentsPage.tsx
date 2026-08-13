@@ -1,11 +1,9 @@
 import { Dispatch, FormEvent, SetStateAction, useState } from "react";
+import { createTournament } from "../lib/api";
 import { paths } from "../lib/routes";
-import type { AppData, Tournament } from "../types";
+import type { AppData } from "../types";
 
 type DataSetter = Dispatch<SetStateAction<AppData>>;
-
-const now = () => new Date().toISOString();
-const id = () => crypto.randomUUID();
 
 function TournamentsPage({
   data,
@@ -19,32 +17,33 @@ function TournamentsPage({
   const [name, setName] = useState("");
   const [location, setLocation] = useState("");
   const [isAddingTournament, setIsAddingTournament] = useState(false);
+  const [isSavingTournament, setIsSavingTournament] = useState(false);
+  const [error, setError] = useState("");
 
-  const addTournament = (event: FormEvent) => {
+  const addTournament = async (event: FormEvent) => {
     event.preventDefault();
     const trimmedName = name.trim();
-    if (!trimmedName) return;
+    if (!trimmedName || isSavingTournament) return;
 
-    const timestamp = now();
-    const tournament: Tournament = {
-      id: id(),
-      name: trimmedName,
-      location: location.trim(),
-      startDate: "",
-      endDate: "",
-      dayCount: 1,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    };
+    setIsSavingTournament(true);
+    setError("");
 
-    setData((current) => ({
-      ...current,
-      tournaments: [...current.tournaments, tournament],
-    }));
-    setName("");
-    setLocation("");
-    setIsAddingTournament(false);
-    navigate(paths.tournament(tournament));
+    try {
+      const result = await createTournament({ name: trimmedName, location: location.trim() });
+      setData(result.data);
+      setName("");
+      setLocation("");
+      setIsAddingTournament(false);
+
+      const tournament = result.data.tournaments.find((item) => item.id === result.tournamentId);
+      if (tournament) {
+        navigate(paths.tournament(tournament));
+      }
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : "Unable to add tournament.");
+    } finally {
+      setIsSavingTournament(false);
+    }
   };
 
   const cancelAddTournament = () => {
@@ -63,6 +62,7 @@ function TournamentsPage({
       </div>
 
       <section className="wide-panel">
+        {error && <p className="status-banner error">{error}</p>}
         <div className="panel-heading">
           <h2>Tournaments</h2>
           <span>{data.tournaments.length}</span>
@@ -79,7 +79,9 @@ function TournamentsPage({
               onChange={(event) => setLocation(event.target.value)}
               placeholder="Location"
             />
-            <button type="submit">Save</button>
+            <button type="submit" disabled={isSavingTournament}>
+              {isSavingTournament ? "Saving" : "Save"}
+            </button>
             <button type="button" className="ghost-button" onClick={cancelAddTournament}>
               Cancel
             </button>

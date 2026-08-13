@@ -22,11 +22,17 @@ import type {
   PointPlayer,
   Possession,
 } from "../types";
+import {
+  deleteGameEvent,
+  finishGamePoint,
+  patchGame,
+  recordGameEvent,
+  startGamePoint,
+} from "../lib/api";
 import { formatTimestamp, getYouTubeVideoId } from "../youtube";
 
 type DataSetter = Dispatch<SetStateAction<AppData>>;
 
-const now = () => new Date().toISOString();
 const id = () => crypto.randomUUID();
 const defaultDiscSpot: FieldCoordinate = { x: 20 / 110, y: 0.5 };
 const defaultDiscSpotForAttack = (attackingEndzone: EndzoneSide): FieldCoordinate => ({
@@ -159,6 +165,7 @@ function ChartingWorkspace({
   setData: DataSetter;
 }) {
   const playerRef = useRef<YouTubePlayer | null>(null);
+  const [error, setError] = useState("");
   const tournamentPlayerIds = new Set(
     data.tournamentPlayers
       .filter((item) => item.tournamentId === game.tournamentId)
@@ -182,6 +189,17 @@ function ChartingWorkspace({
     playerRef.current?.pauseVideo();
   };
 
+  const applyDataMutation = async (mutation: () => Promise<{ data: AppData }>) => {
+    setError("");
+
+    try {
+      const result = await mutation();
+      setData(result.data);
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : "Unable to save game data.");
+    }
+  };
+
   const addEvent = (
     eventType: EventType,
     playerId: Id | null = null,
@@ -190,59 +208,39 @@ function ChartingWorkspace({
       start?: FieldCoordinate | null;
       end?: FieldCoordinate | null;
     } = {},
+    gamePatch: Partial<Game> = {},
+    subPlayerId: Id | null = null,
   ) => {
     if (!activePoint) return;
 
-    const event: Event = {
-      id: id(),
-      gameId: game.id,
-      pointId: activePoint.id,
-      eventType,
-      half: game.secondHalfStarted ? 2 : 1,
-      playerId,
-      secondaryPlayerId,
-      startX: coordinates.start?.x ?? null,
-      startY: coordinates.start?.y ?? null,
-      endX: coordinates.end?.x ?? null,
-      endY: coordinates.end?.y ?? null,
-      pullHangTimeSeconds: null,
-      pullInBounds: null,
-      videoSeconds: getVideoSeconds(),
-      createdAt: now(),
-    };
-
-    setData((current) => ({ ...current, events: [...current.events, event] }));
+    void applyDataMutation(() =>
+      recordGameEvent({
+        gameId: game.id,
+        eventType,
+        playerId,
+        secondaryPlayerId,
+        start: coordinates.start ?? null,
+        end: coordinates.end ?? null,
+        videoSeconds: getVideoSeconds(),
+        gamePatch,
+        subPlayerId,
+      }),
+    );
   };
 
-  const addTimelineEvent = (eventType: "half_time" | "full_time") => {
-    const event: Event = {
-      id: id(),
-      gameId: game.id,
-      pointId: null,
-      eventType,
-      half: eventType === "half_time" ? 1 : 2,
-      playerId: null,
-      secondaryPlayerId: null,
-      startX: null,
-      startY: null,
-      endX: null,
-      endY: null,
-      pullHangTimeSeconds: null,
-      pullInBounds: null,
-      videoSeconds: getVideoSeconds(),
-      createdAt: now(),
-    };
-
-    setData((current) => ({ ...current, events: [...current.events, event] }));
+  const addTimelineEvent = (eventType: "half_time" | "full_time", gamePatch: Partial<Game> = {}) => {
+    void applyDataMutation(() =>
+      recordGameEvent({
+        gameId: game.id,
+        eventType,
+        videoSeconds: getVideoSeconds(),
+        gamePatch,
+      }),
+    );
   };
 
   const updateGame = (patch: Partial<Game>) => {
-    setData((current) => ({
-      ...current,
-      games: current.games.map((item) =>
-        item.id === game.id ? { ...item, ...patch, updatedAt: now() } : item,
-      ),
-    }));
+    void applyDataMutation(() => patchGame(game.id, patch));
   };
 
   const startPoint = (
@@ -258,89 +256,16 @@ function ChartingWorkspace({
       releaseVideoSeconds: number;
     },
   ) => {
-    const timestamp = now();
-    const point: Point = {
-      id: id(),
-      gameId: game.id,
-      pointNumber: currentPointNumber,
-      startedOnOffense,
-      ourScoreStart: game.ourScore,
-      opponentScoreStart: game.opponentScore,
-      ourScoreEnd: null,
-      opponentScoreEnd: null,
-      scoringTeam: null,
-      initialThrowerId: startedOnOffense ? initialThrowerId : null,
-      initialDiscX: startedOnOffense ? initialSpot.x : null,
-      initialDiscY: startedOnOffense ? initialSpot.y : null,
-      status: "active",
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    };
-
-    const pointPlayers: PointPlayer[] = starterIds.map((playerId) => ({
-      id: id(),
-      pointId: point.id,
-      playerId,
-      isStarter: true,
-      createdAt: timestamp,
-    }));
-
-    setData((current) => ({
-      ...current,
-      points: [...current.points, point],
-      pointPlayers: [...current.pointPlayers, ...pointPlayers],
-      events: pullDetails
-        ? [
-            ...current.events,
-            {
-              id: id(),
-              gameId: game.id,
-              pointId: point.id,
-              eventType: "pull",
-              half: game.secondHalfStarted ? 2 : 1,
-              playerId: pullDetails.pullerId,
-              secondaryPlayerId: null,
-              startX: null,
-              startY: null,
-              endX: pullDetails.landingSpot.x,
-              endY: pullDetails.landingSpot.y,
-              pullHangTimeSeconds: pullDetails.hangTimeSeconds,
-              pullInBounds: pullDetails.inBounds,
-              videoSeconds: pullDetails.releaseVideoSeconds,
-              createdAt: timestamp,
-            },
-          ]
-        : current.events,
-      games: current.games.map((item) =>
-        item.id === game.id
-          ? {
-              ...item,
-              currentPossession: startedOnOffense ? "us" : "opponent",
-              activeThrowerId: startedOnOffense ? initialThrowerId : null,
-              discX: startedOnOffense ? initialSpot.x : null,
-              discY: startedOnOffense ? initialSpot.y : null,
-              updatedAt: timestamp,
-            }
-          : item,
-      ),
-    }));
-  };
-
-  const addSub = (playerId: Id) => {
-    if (!activePoint) return;
-
-    const pointPlayer: PointPlayer = {
-      id: id(),
-      pointId: activePoint.id,
-      playerId,
-      isStarter: false,
-      createdAt: now(),
-    };
-
-    setData((current) => ({
-      ...current,
-      pointPlayers: [...current.pointPlayers, pointPlayer],
-    }));
+    void applyDataMutation(() =>
+      startGamePoint({
+        gameId: game.id,
+        starterIds,
+        startedOnOffense,
+        initialThrowerId: startedOnOffense ? initialThrowerId : null,
+        initialSpot,
+        pullDetails,
+      }),
+    );
   };
 
   const finishPoint = (
@@ -355,60 +280,18 @@ function ChartingWorkspace({
   ) => {
     if (!activePoint) return;
 
-    const ourScore = game.ourScore + (scoringTeam === "us" ? 1 : 0);
-    const opponentScore = game.opponentScore + (scoringTeam === "opponent" ? 1 : 0);
-
-    setData((current) => ({
-      ...current,
-      events: eventType
-        ? [
-            ...current.events,
-            {
-              id: id(),
-              gameId: game.id,
-              pointId: activePoint.id,
-              eventType,
-              half: game.secondHalfStarted ? 2 : 1,
-              playerId: playerId ?? null,
-              secondaryPlayerId: secondaryPlayerId ?? null,
-              startX: coordinates.start?.x ?? null,
-              startY: coordinates.start?.y ?? null,
-              endX: coordinates.end?.x ?? null,
-              endY: coordinates.end?.y ?? null,
-              pullHangTimeSeconds: null,
-              pullInBounds: null,
-              videoSeconds: getVideoSeconds(),
-              createdAt: now(),
-            },
-          ]
-        : current.events,
-      points: current.points.map((point) =>
-        point.id === activePoint.id
-          ? {
-              ...point,
-              ourScoreEnd: ourScore,
-              opponentScoreEnd: opponentScore,
-              scoringTeam,
-              status: "complete",
-              updatedAt: now(),
-            }
-          : point,
-      ),
-      games: current.games.map((item) =>
-        item.id === game.id
-          ? {
-              ...item,
-              ourScore,
-              opponentScore,
-              currentPossession: scoringTeam === "us" ? "opponent" : "us",
-              activeThrowerId: null,
-              discX: null,
-              discY: null,
-              updatedAt: now(),
-            }
-          : item,
-      ),
-    }));
+    void applyDataMutation(() =>
+      finishGamePoint({
+        gameId: game.id,
+        scoringTeam,
+        eventType,
+        playerId,
+        secondaryPlayerId,
+        start: coordinates.start ?? null,
+        end: coordinates.end ?? null,
+        videoSeconds: getVideoSeconds(),
+      }),
+    );
   };
 
   const removeEvent = (eventId: Id, shouldSeek = true) => {
@@ -419,111 +302,7 @@ function ChartingWorkspace({
       seekVideo(eventToRemove.videoSeconds);
     }
 
-    setData((current) => {
-      const targetEvent = current.events.find((event) => event.id === eventId);
-      const currentGame = current.games.find((item) => item.id === game.id);
-      if (!targetEvent || !currentGame) return current;
-
-      const timestamp = now();
-      const nextEvents = current.events.filter((event) => event.id !== eventId);
-      let nextPoints = current.points;
-      let nextPointPlayers = current.pointPlayers;
-      let gamePatch: Partial<Game> = { updatedAt: timestamp };
-
-      if (targetEvent.eventType === "injury" && targetEvent.pointId && targetEvent.secondaryPlayerId) {
-        nextPointPlayers = nextPointPlayers.filter(
-          (item) =>
-            !(
-              item.pointId === targetEvent.pointId &&
-              item.playerId === targetEvent.secondaryPlayerId &&
-              !item.isStarter
-            ),
-        );
-      }
-
-      if (targetEvent.eventType === "full_time") {
-        gamePatch = { ...gamePatch, gameFinished: false };
-      }
-
-      if (targetEvent.eventType === "half_time") {
-        gamePatch = {
-          ...gamePatch,
-          secondHalfStarted: false,
-          currentPossession: currentGame.startingPossession ?? currentGame.currentPossession,
-          activeThrowerId: null,
-          discX: null,
-          discY: null,
-        };
-      }
-
-      const targetPoint = current.points.find((point) => point.id === targetEvent.pointId);
-      const targetIsScoreEvent = Boolean(
-        targetPoint && isPointScoreEvent(targetEvent, targetPoint, currentGame),
-      );
-      const emptyActivePoint = targetPoint
-        ? nextPoints.find(
-            (point) =>
-              targetIsScoreEvent &&
-              point.gameId === game.id &&
-              point.status === "active" &&
-              point.pointNumber > targetPoint.pointNumber &&
-              !nextEvents.some((event) => event.pointId === point.id),
-          )
-        : undefined;
-
-      if (emptyActivePoint) {
-        nextPoints = nextPoints.filter((point) => point.id !== emptyActivePoint.id);
-        nextPointPlayers = nextPointPlayers.filter((item) => item.pointId !== emptyActivePoint.id);
-      }
-
-      const hasLaterPoint = targetPoint
-        ? nextPoints.some(
-            (point) => point.gameId === game.id && point.pointNumber > targetPoint.pointNumber,
-          )
-        : false;
-
-      if (targetPoint && targetIsScoreEvent && !hasLaterPoint) {
-        nextPoints = nextPoints.map((point) =>
-          point.id === targetPoint.id
-            ? {
-                ...point,
-                ourScoreEnd: null,
-                opponentScoreEnd: null,
-                scoringTeam: null,
-                status: "active",
-                updatedAt: timestamp,
-              }
-            : point,
-        );
-        gamePatch = {
-          ...gamePatch,
-          ourScore: targetPoint.ourScoreStart,
-          opponentScore: targetPoint.opponentScoreStart,
-          gameFinished: false,
-        };
-      }
-
-      const nextActivePoint = nextPoints.find(
-        (point) => point.gameId === game.id && point.status === "active",
-      );
-
-      if (nextActivePoint) {
-        gamePatch = {
-          ...gamePatch,
-          ...rebuildActiveGameState({ ...currentGame, ...gamePatch }, nextActivePoint, nextEvents),
-        };
-      }
-
-      return {
-        ...current,
-        events: nextEvents,
-        points: nextPoints,
-        pointPlayers: nextPointPlayers,
-        games: current.games.map((item) =>
-          item.id === game.id ? { ...item, ...gamePatch, updatedAt: timestamp } : item,
-        ),
-      };
-    });
+    void applyDataMutation(() => deleteGameEvent(game.id, eventId));
   };
 
   const undoLastEvent = () => {
@@ -547,6 +326,7 @@ function ChartingWorkspace({
 
   return (
     <section className="charting">
+      {error && <p className="status-banner error">{error}</p>}
       <ScoreBar
         game={game}
         activePoint={activePoint}
@@ -567,7 +347,6 @@ function ChartingWorkspace({
             players={data.players}
             latestEvent={latestEvent}
             startPoint={startPoint}
-            addSub={addSub}
             addEvent={addEvent}
             addTimelineEvent={addTimelineEvent}
             updateGame={updateGame}
@@ -726,7 +505,6 @@ function ControlPanel({
   players,
   latestEvent,
   startPoint,
-  addSub,
   addEvent,
   addTimelineEvent,
   updateGame,
@@ -757,7 +535,6 @@ function ControlPanel({
       releaseVideoSeconds: number;
     },
   ) => void;
-  addSub: (playerId: Id) => void;
   addEvent: (
     eventType: EventType,
     playerId?: Id | null,
@@ -766,8 +543,10 @@ function ControlPanel({
       start?: FieldCoordinate | null;
       end?: FieldCoordinate | null;
     },
+    gamePatch?: Partial<Game>,
+    subPlayerId?: Id | null,
   ) => void;
-  addTimelineEvent: (eventType: "half_time" | "full_time") => void;
+  addTimelineEvent: (eventType: "half_time" | "full_time", gamePatch?: Partial<Game>) => void;
   updateGame: (patch: Partial<Game>) => void;
   finishPoint: (
     scoringTeam: Possession,
@@ -979,8 +758,7 @@ function ControlPanel({
   const startSecondHalf = () => {
     if (!game.startingPossession || game.secondHalfStarted) return;
 
-    addTimelineEvent("half_time");
-    updateGame({
+    addTimelineEvent("half_time", {
       currentPossession: oppositePossession(game.startingPossession),
       activeThrowerId: null,
       discX: null,
@@ -994,8 +772,7 @@ function ControlPanel({
   };
 
   const finishGame = () => {
-    addTimelineEvent("full_time");
-    updateGame({
+    addTimelineEvent("full_time", {
       gameFinished: true,
       activeThrowerId: null,
       discX: null,
@@ -1076,8 +853,7 @@ function ControlPanel({
       addEvent("pass", game.activeThrowerId, receiverId, {
         start: discSpot,
         end: passEndSpot,
-      });
-      updateGame({
+      }, {
         activeThrowerId: receiverId,
         discX: passEndSpot.x,
         discY: passEndSpot.y,
@@ -1088,12 +864,6 @@ function ControlPanel({
   };
 
   const moveToPickup = () => {
-    updateGame({
-      currentPossession: "us",
-      activeThrowerId: null,
-      discX: null,
-      discY: null,
-    });
     setPickupPlayerId("");
     setPickupSpot(null);
     setMode("pickup");
@@ -1102,12 +872,22 @@ function ControlPanel({
   const submitBlock = () => {
     if (!pickupPlayerId) return;
 
-    addEvent("block", pickupPlayerId);
+    addEvent("block", pickupPlayerId, null, {}, {
+      currentPossession: "us",
+      activeThrowerId: null,
+      discX: null,
+      discY: null,
+    });
     moveToPickup();
   };
 
   const submitOpponentTurnover = () => {
-    addEvent("opponent_turnover");
+    addEvent("opponent_turnover", null, null, {}, {
+      currentPossession: "us",
+      activeThrowerId: null,
+      discX: null,
+      discY: null,
+    });
     moveToPickup();
   };
 
@@ -1116,8 +896,7 @@ function ControlPanel({
 
     addEvent("pickup", pickupPlayerId, null, {
       end: pickupSpot,
-    });
-    updateGame({
+    }, {
       activeThrowerId: pickupPlayerId,
       discX: pickupSpot.x,
       discY: pickupSpot.y,
@@ -1125,44 +904,42 @@ function ControlPanel({
     cancelMode();
   };
 
-  const giveDiscToOpponent = () => {
-    updateGame({
+  const opponentPossessionPatch: Partial<Game> = {
       currentPossession: "opponent",
       activeThrowerId: null,
       discX: null,
       discY: null,
-    });
   };
 
   const submitThrowaway = () => {
     addEvent("throwaway", game.activeThrowerId, null, {
       start: game.activeThrowerId ? discSpot : null,
       end: game.activeThrowerId ? discSpot : null,
-    });
-    giveDiscToOpponent();
+    }, opponentPossessionPatch);
   };
 
   const submitOpponentBlock = () => {
-    addEvent("opponent_block", game.activeThrowerId);
-    giveDiscToOpponent();
+    addEvent("opponent_block", game.activeThrowerId, null, {}, opponentPossessionPatch);
   };
 
   const submitDrop = () => {
     if (!receiverId) return;
 
-    addEvent("drop", receiverId, game.activeThrowerId);
-    giveDiscToOpponent();
+    addEvent("drop", receiverId, game.activeThrowerId, {}, opponentPossessionPatch);
     cancelMode();
   };
 
   const submitInjury = () => {
     if (!canSubmitInjury) return;
 
-    addEvent("injury", injuredPlayerId, subPlayerId);
-    addSub(subPlayerId);
-    if (game.activeThrowerId === injuredPlayerId) {
-      updateGame({ activeThrowerId: subPlayerId });
-    }
+    addEvent(
+      "injury",
+      injuredPlayerId,
+      subPlayerId,
+      {},
+      game.activeThrowerId === injuredPlayerId ? { activeThrowerId: subPlayerId } : {},
+      subPlayerId,
+    );
     cancelMode();
   };
 

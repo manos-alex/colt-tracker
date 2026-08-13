@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { createEmptyData } from "./data";
+import { fetchBootstrapData } from "./lib/api";
 import { paths, slugifyTournamentName } from "./lib/routes";
 import GamePage from "./pages/GamePage";
 import HomePage from "./pages/HomePage";
@@ -10,7 +11,33 @@ import type { AppData } from "./types";
 
 function App() {
   const [data, setData] = useState<AppData>(() => createEmptyData());
+  const [loadError, setLoadError] = useState("");
+  const [isLoadingData, setIsLoadingData] = useState(true);
   const [pathname, setPathname] = useState(() => window.location.pathname);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    fetchBootstrapData()
+      .then((loadedData) => {
+        if (cancelled) return;
+        setData(loadedData);
+        setLoadError("");
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setLoadError(error instanceof Error ? error.message : "Unable to load app data.");
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoadingData(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     const handlePopState = () => setPathname(window.location.pathname);
@@ -60,7 +87,15 @@ function App() {
         </button>
       </header>
 
-      <RouteView data={data} setData={setData} pathname={pathname} navigate={navigate} />
+      {loadError && <p className="status-banner error">{loadError}</p>}
+
+      {isLoadingData ? (
+        <section className="empty-state">
+          <h1>Loading Data</h1>
+        </section>
+      ) : (
+        <RouteView data={data} setData={setData} pathname={pathname} navigate={navigate} />
+      )}
     </main>
   );
 }

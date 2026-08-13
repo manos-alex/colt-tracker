@@ -4,9 +4,15 @@ React/TypeScript app for charting one ultimate frisbee team's stats from YouTube
 
 ## Current State
 
-The frontend currently keeps data in React state while the API and PostgreSQL persistence layer are
-being built. Refreshing the browser resets local session data. The important future database tables
-are represented as TypeScript types:
+The app now runs as a Vite React frontend plus a TypeScript serverless backend. Local development
+starts both processes with `npm run dev`: Vite serves the frontend and proxies `/api/*` to the local
+backend on port `8787`.
+
+The backend reads and writes Aurora PostgreSQL through the RDS Data API. In dev, local backend code
+uses the same Aurora Serverless database as the deployed Lambda, so roster, tournament, game, point,
+and event data persists across refreshes.
+
+The database tables are:
 
 - `players`: one `name` field for display and references, plus `roster_player` for whether the player is on the core roster.
 - `tournaments`
@@ -34,7 +40,70 @@ npm run dev
 npm run build
 ```
 
+## Local Backend Environment
+
+Create a repo-root `.env` file for local backend development:
+
+```sh
+AWS_PROFILE=colt-dev-deploy
+AWS_REGION=us-east-1
+DB_CLUSTER_ARN=...
+DB_SECRET_ARN=...
+DB_NAME=colttracker
+ENVIRONMENT=local
+PORT=8787
+```
+
+You can populate the database values from Terraform outputs after the dev stack exists:
+
+```sh
+AWS_PROFILE=colt-dev-deploy terraform -chdir=infra output -raw database_cluster_arn
+AWS_PROFILE=colt-dev-deploy terraform -chdir=infra output -raw database_secret_arn
+AWS_PROFILE=colt-dev-deploy terraform -chdir=infra output -raw database_name
+```
+
+`backend/src/local.ts` loads `.env` automatically. Lambda receives equivalent values from
+Terraform-managed environment variables.
+
+## Backend API
+
+The frontend hydrates with `GET /api/bootstrap`, which returns the full `AppData` shape. Mutations
+return either the changed resource or a refreshed `AppData` payload.
+
+Implemented route groups:
+
+- `GET /api/health`
+- `GET /api/bootstrap`
+- `/api/players`: create, update, delete, and list players.
+- `/api/tournaments`: create tournaments, roster tournament players, add games/byes, reorder or delete schedule items, and update day counts.
+- `/api/games`: patch game state, start points, record events, finish points, and delete events.
+
+## Dev Deployment
+
+The backend Lambda is bundled by `npm run build` into `backend/dist/lambda/index.js`. Terraform
+packages that artifact and deploys it behind API Gateway.
+
+Manual dev flow:
+
+```sh
+npm run build
+terraform -chdir=infra fmt -recursive
+terraform -chdir=infra validate
+terraform -chdir=infra plan -var-file=environments/dev.tfvars
+terraform -chdir=infra apply -var-file=environments/dev.tfvars
+AWS_PROFILE=colt-dev-deploy AWS_REGION=us-east-1 aws lambda invoke \
+  --function-name "$(terraform -chdir=infra output -raw migration_runner_function_name)" \
+  /tmp/colt-tracker-migrations.json
+```
+
+Then smoke test:
+
+```sh
+curl "$(terraform -chdir=infra output -raw api_endpoint)/api/health"
+curl "$(terraform -chdir=infra output -raw api_endpoint)/api/bootstrap"
+```
+
 ## Architecture
 
-See [docs/architecture.md](docs/architecture.md) for the planned AWS/PostgreSQL direction, future
-database tables, and guidance for keeping events extensible as new stats and recordables are added.
+See [docs/architecture.md](docs/architecture.md) for the AWS/PostgreSQL architecture, database
+tables, and guidance for keeping events extensible as new stats and recordables are added.

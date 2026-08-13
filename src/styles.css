@@ -140,6 +140,22 @@ p {
   color: #243447;
 }
 
+.status-banner {
+  border: 1px solid #d7dfe8;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #405164;
+  padding: 10px 12px;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.status-banner.error {
+  border-color: #f1c7c7;
+  background: #fff6f6;
+  color: #9f2d2d;
+}
+
 .compact-button {
   min-height: 32px;
   padding: 0 10px;

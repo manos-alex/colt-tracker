@@ -4,19 +4,28 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite --host 0.0.0.0",
-    "build": "tsc && vite build",
+    "dev": "concurrently \"npm run dev:web\" \"npm run dev:api\"",
+    "dev:web": "vite --host 0.0.0.0",
+    "dev:api": "tsx watch backend/src/local.ts",
+    "build": "tsc && npm run build:backend && vite build",
+    "build:backend": "tsc -p tsconfig.backend.json && esbuild backend/src/lambda.ts --bundle --platform=node --target=node22 --format=cjs --outfile=backend/dist/lambda/index.js",
     "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {
+    "@aws-sdk/client-rds-data": "^3.1108.0",
     "@vitejs/plugin-react": "^5.0.0",
-    "vite": "^7.0.0",
-    "typescript": "^5.8.0",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "react-dom": "^19.1.0",
+    "typescript": "^5.8.0",
+    "vite": "^7.0.0"
   },
   "devDependencies": {
+    "@types/node": "^22.13.0",
     "@types/react": "^19.1.0",
-    "@types/react-dom": "^19.1.0"
+    "@types/react-dom": "^19.1.0",
+    "concurrently": "^9.2.0",
+    "dotenv": "^17.4.2",
+    "esbuild": "^0.25.0",
+    "tsx": "^4.20.0"
   }
 }

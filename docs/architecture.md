@@ -2,27 +2,31 @@
 
 ## Current State
 
-Colt Tracker is currently a Vite + React + TypeScript frontend app. Browser persistence has been
-removed; data is held in React state until the TypeScript API and PostgreSQL layer are wired in.
+Colt Tracker is a Vite + React + TypeScript frontend app backed by a TypeScript API. In local
+development, `npm run dev` starts both Vite and a local Node backend; Vite proxies `/api/*` to that
+backend. The local backend and deployed dev Lambda both use Aurora PostgreSQL through the RDS Data
+API, so app data persists across browser refreshes.
 
-The frontend types in `src/types.ts` are intentionally close to the future relational database
-shape. The app is for one ultimate frisbee team only, so do not add a `teams` table unless the
-product direction changes.
+The frontend types in `src/types.ts` intentionally match the relational database shape. The app is
+for one ultimate frisbee team only, so do not add a `teams` table unless the product direction
+changes.
 
-## Planned Cloud Direction
+## Cloud Architecture
 
-The likely production architecture is:
+The current deployment path is:
 
 - React + TypeScript frontend.
 - Static frontend hosting on S3 and CloudFront.
-- TypeScript API/backend, likely serverless.
-- PostgreSQL database hosted on AWS.
+- HTTP API Gateway invoking a TypeScript Lambda backend.
+- Aurora PostgreSQL Serverless v2 for persistence.
+- RDS Data API for Lambda and local backend database access.
+- Secrets Manager for generated database credentials.
 - Terraform-managed AWS infrastructure.
 - Auth/whitelist after the core charting workflow and data model stabilize.
 
-When creating infrastructure, preserve a clean path from the current local frontend model to a
-Postgres-backed API. Avoid infrastructure choices that make relational queries or event timeline
-analysis difficult.
+The browser never connects directly to PostgreSQL. React calls API Gateway in deployed
+environments, and calls the local backend through Vite's `/api` proxy during local development.
+Lambda validates requests, performs transactional writes where needed, and returns JSON.
 
 ## Core Database Tables
 
@@ -56,7 +60,7 @@ Adding new stats or new recordable actions should be easy. The app should avoid 
 database column for every event-specific detail unless that detail is common across many event
 types.
 
-A good future Postgres shape is:
+The implemented Postgres shape is:
 
 - `events`: shared timeline fields
   - `id`
@@ -70,13 +74,12 @@ A good future Postgres shape is:
   - normalized coordinates where relevant
   - `created_at`
 - Event-specific details:
-  - Either `events.payload jsonb`, with typed API validation, or companion detail tables.
+  - `events.payload jsonb`, with typed API validation.
   - Examples: pull hang time, pull in bounds, throw type, stall count, force, call type, defensive
     matchup, pressure, etc.
 
-For the early backend, a typed JSONB payload is likely the most flexible option. If a detail becomes
-heavily queried or shared across many event types, it can later be promoted into a dedicated column
-or detail table.
+If a detail becomes heavily queried or shared across many event types, it can later be promoted into
+a dedicated column or companion detail table.
 
 ## Event Type Guidelines
 
@@ -111,11 +114,21 @@ Dashboard/stat views can convert normalized coordinates to yards later.
 
 ## Backend Migration Notes
 
-When adding persistent storage:
+When changing persistent storage:
 
-- Keep the frontend workflow stable first.
-- Introduce a TypeScript API boundary before wiring in Postgres.
+- Keep the frontend workflow stable.
+- Keep the TypeScript API boundary between React and Postgres.
 - Validate event payloads by `event_type` at the API layer.
 - Treat the event log as authoritative for stat queries and timeline reconstruction.
 - Preserve stable IDs for games, points, players, and events.
 - Use migrations from the start for Postgres schema changes.
+- Run migrations as an explicit deployment step through the migration runner Lambda.
+
+## Backend Code Layout
+
+- `backend/src/local.ts`: local Node HTTP server, loads `.env`.
+- `backend/src/lambda.ts`: API Gateway Lambda adapter.
+- `backend/src/app.ts`: route dispatcher and shared error handling.
+- `backend/src/db/dataApi.ts`: RDS Data API helper, SQL parameter helpers, and transaction helpers.
+- `backend/src/db/mappers.ts`: snake_case database rows to camelCase frontend types.
+- `backend/src/routes`: route handlers for bootstrap, roster, tournament/game setup, and charting.

@@ -2,80 +2,76 @@
 
 The dev Aurora database is private. Do not make it public for local development.
 
-Use Aurora's Data API from local backend code. The app stack already enables the Data API and stores
-database credentials in Secrets Manager.
+Local backend code uses Aurora's Data API. The app stack enables the Data API and stores database
+credentials in Secrets Manager, so local development does not need a public database endpoint,
+tunnel, or direct PostgreSQL connection.
 
-## Export Environment
+## Environment
 
-From the repo root after the dev stack has been applied:
-
-```sh
-export AWS_PROFILE=colt-dev-deploy
-export AWS_REGION="$(terraform -chdir=infra output -raw aws_region)"
-export DB_CLUSTER_ARN="$(terraform -chdir=infra output -raw database_cluster_arn)"
-export DB_SECRET_ARN="$(terraform -chdir=infra output -raw database_secret_arn)"
-export DB_NAME="$(terraform -chdir=infra output -raw database_name)"
-```
-
-## Smoke Test
+Create a repo-root `.env` file after the dev stack has been applied:
 
 ```sh
-aws rds-data execute-statement \
-  --resource-arn "$DB_CLUSTER_ARN" \
-  --secret-arn "$DB_SECRET_ARN" \
-  --database "$DB_NAME" \
-  --sql "select table_name from information_schema.tables where table_schema = 'public' order by table_name;"
+AWS_PROFILE=colt-dev-deploy
+AWS_REGION=us-east-1
+DB_CLUSTER_ARN=...
+DB_SECRET_ARN=...
+DB_NAME=colttracker
+ENVIRONMENT=local
+PORT=8787
 ```
 
-## TypeScript Shape
-
-Install the SDK package in the backend package once it exists:
+Get the database values from Terraform outputs:
 
 ```sh
-npm install @aws-sdk/client-rds-data
+AWS_PROFILE=colt-dev-deploy terraform -chdir=infra output -raw aws_region
+AWS_PROFILE=colt-dev-deploy terraform -chdir=infra output -raw database_cluster_arn
+AWS_PROFILE=colt-dev-deploy terraform -chdir=infra output -raw database_secret_arn
+AWS_PROFILE=colt-dev-deploy terraform -chdir=infra output -raw database_name
 ```
 
-Minimal query helper:
+`backend/src/local.ts` loads `.env` automatically through `dotenv/config`. The frontend does not
+read the database environment variables; it calls `/api/*`.
 
-```ts
-import {
-  ExecuteStatementCommand,
-  RDSDataClient,
-  type Field,
-  type SqlParameter,
-} from "@aws-sdk/client-rds-data";
+## Run Locally
 
-const client = new RDSDataClient({ region: process.env.AWS_REGION });
-
-export async function executeSql(sql: string, parameters: SqlParameter[] = []) {
-  return client.send(
-    new ExecuteStatementCommand({
-      resourceArn: requiredEnv("DB_CLUSTER_ARN"),
-      secretArn: requiredEnv("DB_SECRET_ARN"),
-      database: requiredEnv("DB_NAME"),
-      sql,
-      parameters,
-    }),
-  );
-}
-
-export function fieldValue(field: Field) {
-  if ("isNull" in field && field.isNull) return null;
-  if ("stringValue" in field) return field.stringValue;
-  if ("longValue" in field) return field.longValue;
-  if ("doubleValue" in field) return field.doubleValue;
-  if ("booleanValue" in field) return field.booleanValue;
-  if ("blobValue" in field) return field.blobValue;
-  if ("arrayValue" in field) return field.arrayValue;
-  return null;
-}
-
-function requiredEnv(name: string) {
-  const value = process.env[name];
-  if (!value) throw new Error(`Missing environment variable: ${name}`);
-  return value;
-}
+```sh
+npm install
+npm run dev
 ```
+
+This starts:
+
+- Vite frontend on `http://localhost:5173`.
+- Local backend on `http://localhost:8787`.
+- Vite proxy from `/api/*` to the local backend.
+
+Smoke test the local backend directly:
+
+```sh
+curl http://localhost:8787/api/health
+curl http://localhost:8787/api/bootstrap
+```
+
+Smoke test through Vite's proxy:
+
+```sh
+curl http://localhost:5173/api/health
+curl http://localhost:5173/api/bootstrap
+```
+
+## API Shape
+
+The local and deployed backend expose the same routes:
+
+- `GET /api/health`
+- `GET /api/bootstrap`
+- `/api/players`
+- `/api/tournaments`
+- `/api/games`
+
+`GET /api/bootstrap` returns the full frontend `AppData` shape from Aurora. Most mutation routes
+return a refreshed `AppData` payload so the frontend can replace local React state with the server
+state after each write.
 
 ## Tradeoff
 

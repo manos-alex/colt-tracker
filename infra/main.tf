@@ -8,10 +8,19 @@ data "aws_cloudfront_cache_policy" "caching_optimized" {
   name = "Managed-CachingOptimized"
 }
 
+data "aws_cloudfront_cache_policy" "caching_disabled" {
+  name = "Managed-CachingDisabled"
+}
+
+data "aws_cloudfront_origin_request_policy" "api_gateway" {
+  name = "Managed-AllViewerExceptHostHeader"
+}
+
 locals {
-  name_prefix = substr(replace(lower("${var.project_name}-${var.environment}"), "/[^a-z0-9-]/", "-"), 0, 40)
-  origin_id   = "${local.name_prefix}-frontend"
-  az_names    = slice(data.aws_availability_zones.available.names, 0, 2)
+  name_prefix        = substr(replace(lower("${var.project_name}-${var.environment}"), "/[^a-z0-9-]/", "-"), 0, 40)
+  frontend_origin_id = "${local.name_prefix}-frontend"
+  api_origin_id      = "${local.name_prefix}-api"
+  az_names           = slice(data.aws_availability_zones.available.names, 0, 2)
 
   tags = {
     Application = var.project_name
@@ -79,7 +88,19 @@ resource "aws_cloudfront_distribution" "frontend" {
   origin {
     domain_name              = aws_s3_bucket.frontend.bucket_regional_domain_name
     origin_access_control_id = aws_cloudfront_origin_access_control.frontend.id
-    origin_id                = local.origin_id
+    origin_id                = local.frontend_origin_id
+  }
+
+  origin {
+    domain_name = replace(aws_apigatewayv2_api.api.api_endpoint, "https://", "")
+    origin_id   = local.api_origin_id
+
+    custom_origin_config {
+      http_port              = 80
+      https_port             = 443
+      origin_protocol_policy = "https-only"
+      origin_ssl_protocols   = ["TLSv1.2"]
+    }
   }
 
   default_cache_behavior {
@@ -87,8 +108,19 @@ resource "aws_cloudfront_distribution" "frontend" {
     cached_methods         = ["GET", "HEAD"]
     cache_policy_id        = data.aws_cloudfront_cache_policy.caching_optimized.id
     compress               = true
-    target_origin_id       = local.origin_id
+    target_origin_id       = local.frontend_origin_id
     viewer_protocol_policy = "redirect-to-https"
+  }
+
+  ordered_cache_behavior {
+    path_pattern             = "/api/*"
+    allowed_methods          = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"]
+    cached_methods           = ["GET", "HEAD", "OPTIONS"]
+    cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
+    compress                 = true
+    origin_request_policy_id = data.aws_cloudfront_origin_request_policy.api_gateway.id
+    target_origin_id         = local.api_origin_id
+    viewer_protocol_policy   = "redirect-to-https"
   }
 
   custom_error_response {
@@ -212,6 +244,15 @@ resource "aws_vpc_endpoint" "secretsmanager" {
   private_dns_enabled = true
 }
 
+resource "aws_vpc_endpoint" "rds_data" {
+  vpc_id              = aws_vpc.app.id
+  service_name        = "com.amazonaws.${var.aws_region}.rds-data"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = aws_subnet.private[*].id
+  security_group_ids  = [aws_security_group.vpc_endpoints.id]
+  private_dns_enabled = true
+}
+
 resource "aws_db_subnet_group" "database" {
   name       = "${local.name_prefix}-postgres"
   subnet_ids = aws_subnet.private[*].id
@@ -250,8 +291,8 @@ resource "aws_rds_cluster_instance" "database" {
 
 data "archive_file" "api_lambda" {
   type        = "zip"
-  source_dir  = "${path.module}/lambda-placeholder"
-  output_path = "${path.module}/.terraform-build/api-placeholder.zip"
+  source_dir  = "${path.module}/../backend/dist/lambda"
+  output_path = "${path.module}/.terraform-build/api.zip"
 }
 
 data "archive_file" "migration_runner" {
@@ -296,17 +337,28 @@ resource "aws_iam_role_policy_attachment" "api_lambda_vpc" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
 }
 
-data "aws_iam_policy_document" "api_lambda_secrets" {
+data "aws_iam_policy_document" "api_lambda_database" {
+  statement {
+    actions = [
+      "rds-data:BatchExecuteStatement",
+      "rds-data:BeginTransaction",
+      "rds-data:CommitTransaction",
+      "rds-data:ExecuteStatement",
+      "rds-data:RollbackTransaction",
+    ]
+    resources = [aws_rds_cluster.database.arn]
+  }
+
   statement {
     actions   = ["secretsmanager:GetSecretValue"]
     resources = [aws_rds_cluster.database.master_user_secret[0].secret_arn]
   }
 }
 
-resource "aws_iam_role_policy" "api_lambda_secrets" {
-  name   = "${local.name_prefix}-api-lambda-secrets"
+resource "aws_iam_role_policy" "api_lambda_database" {
+  name   = "${local.name_prefix}-api-lambda-database"
   role   = aws_iam_role.api_lambda.id
-  policy = data.aws_iam_policy_document.api_lambda_secrets.json
+  policy = data.aws_iam_policy_document.api_lambda_database.json
 }
 
 resource "aws_cloudwatch_log_group" "api_lambda" {
@@ -327,12 +379,13 @@ resource "aws_lambda_function" "api" {
 
   environment {
     variables = {
-      DB_HOST       = aws_rds_cluster.database.endpoint
-      DB_NAME       = var.database_name
-      DB_PORT       = "5432"
-      DB_SECRET_ARN = aws_rds_cluster.database.master_user_secret[0].secret_arn
-      ENVIRONMENT   = var.environment
-      PROJECT_NAME  = var.project_name
+      DB_CLUSTER_ARN = aws_rds_cluster.database.arn
+      DB_HOST        = aws_rds_cluster.database.endpoint
+      DB_NAME        = var.database_name
+      DB_PORT        = "5432"
+      DB_SECRET_ARN  = aws_rds_cluster.database.master_user_secret[0].secret_arn
+      ENVIRONMENT    = var.environment
+      PROJECT_NAME   = var.project_name
     }
   }
 
@@ -345,7 +398,9 @@ resource "aws_lambda_function" "api" {
     aws_cloudwatch_log_group.api_lambda,
     aws_iam_role_policy_attachment.api_lambda_basic,
     aws_iam_role_policy_attachment.api_lambda_vpc,
-    aws_iam_role_policy.api_lambda_secrets,
+    aws_iam_role_policy.api_lambda_database,
+    aws_vpc_endpoint.rds_data,
+    aws_vpc_endpoint.secretsmanager,
   ]
 }
 
