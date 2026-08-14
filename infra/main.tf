@@ -183,74 +183,16 @@ resource "aws_subnet" "private" {
   availability_zone = local.az_names[count.index]
 }
 
-resource "aws_security_group" "lambda" {
-  name        = "${local.name_prefix}-api-lambda"
-  description = "Lambda API egress"
-  vpc_id      = aws_vpc.app.id
-}
-
-resource "aws_vpc_security_group_egress_rule" "lambda_all" {
-  security_group_id = aws_security_group.lambda.id
-  cidr_ipv4         = "0.0.0.0/0"
-  ip_protocol       = "-1"
-}
-
 resource "aws_security_group" "database" {
   name        = "${local.name_prefix}-postgres"
   description = "Aurora PostgreSQL access from Lambda"
   vpc_id      = aws_vpc.app.id
 }
 
-resource "aws_vpc_security_group_ingress_rule" "database_from_lambda" {
-  security_group_id            = aws_security_group.database.id
-  referenced_security_group_id = aws_security_group.lambda.id
-  from_port                    = 5432
-  to_port                      = 5432
-  ip_protocol                  = "tcp"
-}
-
 resource "aws_vpc_security_group_egress_rule" "database_all" {
   security_group_id = aws_security_group.database.id
   cidr_ipv4         = "0.0.0.0/0"
   ip_protocol       = "-1"
-}
-
-resource "aws_security_group" "vpc_endpoints" {
-  name        = "${local.name_prefix}-vpc-endpoints"
-  description = "Interface endpoint access from Lambda"
-  vpc_id      = aws_vpc.app.id
-}
-
-resource "aws_vpc_security_group_ingress_rule" "secretsmanager_from_lambda" {
-  security_group_id            = aws_security_group.vpc_endpoints.id
-  referenced_security_group_id = aws_security_group.lambda.id
-  from_port                    = 443
-  to_port                      = 443
-  ip_protocol                  = "tcp"
-}
-
-resource "aws_vpc_security_group_egress_rule" "vpc_endpoints_all" {
-  security_group_id = aws_security_group.vpc_endpoints.id
-  cidr_ipv4         = "0.0.0.0/0"
-  ip_protocol       = "-1"
-}
-
-resource "aws_vpc_endpoint" "secretsmanager" {
-  vpc_id              = aws_vpc.app.id
-  service_name        = "com.amazonaws.${var.aws_region}.secretsmanager"
-  vpc_endpoint_type   = "Interface"
-  subnet_ids          = aws_subnet.private[*].id
-  security_group_ids  = [aws_security_group.vpc_endpoints.id]
-  private_dns_enabled = true
-}
-
-resource "aws_vpc_endpoint" "rds_data" {
-  vpc_id              = aws_vpc.app.id
-  service_name        = "com.amazonaws.${var.aws_region}.rds-data"
-  vpc_endpoint_type   = "Interface"
-  subnet_ids          = aws_subnet.private[*].id
-  security_group_ids  = [aws_security_group.vpc_endpoints.id]
-  private_dns_enabled = true
 }
 
 resource "aws_db_subnet_group" "database" {
@@ -332,11 +274,6 @@ resource "aws_iam_role_policy_attachment" "api_lambda_basic" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
-resource "aws_iam_role_policy_attachment" "api_lambda_vpc" {
-  role       = aws_iam_role.api_lambda.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
-}
-
 data "aws_iam_policy_document" "api_lambda_database" {
   statement {
     actions = [
@@ -380,27 +317,17 @@ resource "aws_lambda_function" "api" {
   environment {
     variables = {
       DB_CLUSTER_ARN = aws_rds_cluster.database.arn
-      DB_HOST        = aws_rds_cluster.database.endpoint
       DB_NAME        = var.database_name
-      DB_PORT        = "5432"
       DB_SECRET_ARN  = aws_rds_cluster.database.master_user_secret[0].secret_arn
       ENVIRONMENT    = var.environment
       PROJECT_NAME   = var.project_name
     }
   }
 
-  vpc_config {
-    security_group_ids = [aws_security_group.lambda.id]
-    subnet_ids         = aws_subnet.private[*].id
-  }
-
   depends_on = [
     aws_cloudwatch_log_group.api_lambda,
     aws_iam_role_policy_attachment.api_lambda_basic,
-    aws_iam_role_policy_attachment.api_lambda_vpc,
     aws_iam_role_policy.api_lambda_database,
-    aws_vpc_endpoint.rds_data,
-    aws_vpc_endpoint.secretsmanager,
   ]
 }
 

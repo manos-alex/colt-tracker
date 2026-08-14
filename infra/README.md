@@ -6,8 +6,8 @@ Terraform for the initial AWS deployment path:
 - CloudFront distribution in front of the frontend bucket.
 - HTTP API Gateway with the TypeScript backend Lambda.
 - Aurora PostgreSQL Serverless v2 cluster and generated credentials in Secrets Manager.
-- Private VPC networking for Lambda-to-database access.
-- VPC endpoints for AWS APIs used from private Lambda subnets.
+- Private VPC networking for Aurora.
+- RDS Data API access from Lambda and local backend code.
 
 SQL tables live in `migrations/001_initial_schema.sql`. Terraform creates the database
 infrastructure; migrations create and evolve database tables.
