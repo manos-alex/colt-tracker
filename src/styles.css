@@ -810,6 +810,13 @@ p {
   gap: 12px;
 }
 
+.timeline-warning-panel {
+  border: 1px solid #f0c36d;
+  border-radius: 8px;
+  background: #fff8e8;
+  padding: 14px;
+}
+
 .segmented {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1057,18 +1064,21 @@ p {
   gap: 8px;
 }
 
-.game-finished-panel .section-title > div {
+.game-finished-panel .section-title > div,
+.timeline-warning-panel .section-title > div {
   display: grid;
   gap: 5px;
 }
 
-.game-finished-panel strong {
+.game-finished-panel strong,
+.timeline-warning-panel strong {
   color: #1f3246;
   font-size: 18px;
   font-weight: 900;
 }
 
-.game-finished-panel span {
+.game-finished-panel span,
+.timeline-warning-panel span {
   color: #60748a;
   font-size: 14px;
   font-weight: 800;

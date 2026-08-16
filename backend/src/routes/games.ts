@@ -130,6 +130,15 @@ async function startPoint(gameId: Id, body: unknown): Promise<ApiResponse> {
     };
   }
 
+  const pointStartEventVideoSeconds =
+    startedOnOffense.value && initialThrowerId.value
+      ? initialCatchVideoSeconds.value
+      : pullDetails?.releaseVideoSeconds ?? null;
+  if (pointStartEventVideoSeconds !== null) {
+    const timelineError = await validateEventTimestamp(gameId, pointStartEventVideoSeconds);
+    if (timelineError) return timelineError;
+  }
+
   return jsonResponse(
     200,
     await mutateAndReturnData(async (transactionId) => {
@@ -243,6 +252,9 @@ async function recordEvent(gameId: Id, body: unknown): Promise<ApiResponse> {
   const subPlayerId = parseOptionalUuid(body.subPlayerId, "subPlayerId");
   if ("error" in subPlayerId) return badRequest(subPlayerId.error);
 
+  const timelineError = await validateEventTimestamp(gameId, parsed.value.videoSeconds);
+  if (timelineError) return timelineError;
+
   return jsonResponse(
     200,
     await mutateAndReturnData(async (transactionId) => {
@@ -289,6 +301,11 @@ async function finishPoint(gameId: Id, body: unknown): Promise<ApiResponse> {
   const eventInput =
     body.eventType === undefined || body.eventType === null ? null : parseEventBody(body);
   if (eventInput && "error" in eventInput) return badRequest(eventInput.error);
+
+  if (eventInput) {
+    const timelineError = await validateEventTimestamp(gameId, eventInput.value.videoSeconds);
+    if (timelineError) return timelineError;
+  }
 
   return jsonResponse(
     200,
@@ -344,6 +361,31 @@ async function finishPoint(gameId: Id, body: unknown): Promise<ApiResponse> {
         transactionId,
       );
     }),
+  );
+}
+
+async function validateEventTimestamp(
+  gameId: Id,
+  eventVideoSeconds: number,
+): Promise<ApiResponse | null> {
+  const latestEvent = await executeSql<{ video_seconds: number }>(
+    `
+      select video_seconds
+      from events
+      where game_id = cast(:gameId as uuid)
+      order by video_seconds desc, created_at desc
+      limit 1
+    `,
+    [sqlParam("gameId", gameId)],
+  );
+  const latestVideoSeconds = Number(latestEvent.rows[0]?.video_seconds);
+
+  if (!Number.isFinite(latestVideoSeconds) || eventVideoSeconds >= latestVideoSeconds) {
+    return null;
+  }
+
+  return badRequest(
+    `Event timestamp cannot be earlier than the latest event timestamp (${latestVideoSeconds} seconds).`,
   );
 }
 
