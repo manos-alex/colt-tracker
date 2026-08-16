@@ -186,6 +186,7 @@ create table events (
   constraint events_event_type_valid check (
     event_type in (
       'pull',
+      'catch',
       'pass',
       'turnover',
       'throwaway',

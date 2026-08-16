@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -15,11 +15,14 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const database = process.env.DB_NAME;
 const resourceArn = process.env.DB_CLUSTER_ARN;
 const secretArn = process.env.DB_SECRET_ARN;
+const migrationsDir = existsSync(join(__dirname, "migrations"))
+  ? join(__dirname, "migrations")
+  : join(__dirname, "..", "migrations");
 
 export async function handler() {
   assertConfig();
 
-  const migrations = readdirSync(join(__dirname, "migrations"))
+  const migrations = readdirSync(migrationsDir)
     .filter((file) => file.endsWith(".sql"))
     .sort();
   const applied = [];
@@ -61,7 +64,7 @@ async function migrationApplied(version) {
 }
 
 async function applyMigration(file, version) {
-  const sql = readFileSync(join(__dirname, "migrations", file), "utf8");
+  const sql = readFileSync(join(migrationsDir, file), "utf8");
   const statements = splitSqlStatements(sql);
   const transaction = await client.send(
     new BeginTransactionCommand({

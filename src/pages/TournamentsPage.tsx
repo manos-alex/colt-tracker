@@ -1,7 +1,7 @@
 import { Dispatch, FormEvent, SetStateAction, useState } from "react";
-import { createTournament } from "../lib/api";
+import { createTournament, deleteTournament } from "../lib/api";
 import { paths } from "../lib/routes";
-import type { AppData } from "../types";
+import type { AppData, Tournament } from "../types";
 
 type DataSetter = Dispatch<SetStateAction<AppData>>;
 
@@ -17,7 +17,9 @@ function TournamentsPage({
   const [name, setName] = useState("");
   const [location, setLocation] = useState("");
   const [isAddingTournament, setIsAddingTournament] = useState(false);
+  const [isEditingTournaments, setIsEditingTournaments] = useState(false);
   const [isSavingTournament, setIsSavingTournament] = useState(false);
+  const [deletingTournamentId, setDeletingTournamentId] = useState("");
   const [error, setError] = useState("");
 
   const addTournament = async (event: FormEvent) => {
@@ -52,6 +54,22 @@ function TournamentsPage({
     setIsAddingTournament(false);
   };
 
+  const removeTournament = async (tournament: Tournament) => {
+    if (deletingTournamentId) return;
+
+    setDeletingTournamentId(tournament.id);
+    setError("");
+
+    try {
+      const result = await deleteTournament(tournament.id);
+      setData(result.data);
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : "Unable to remove tournament.");
+    } finally {
+      setDeletingTournamentId("");
+    }
+  };
+
   return (
     <section className="page-stack">
       <div className="page-heading">
@@ -65,7 +83,17 @@ function TournamentsPage({
         {error && <p className="status-banner error">{error}</p>}
         <div className="panel-heading">
           <h2>Tournaments</h2>
-          <span>{data.tournaments.length}</span>
+          <div className="section-actions">
+            <span>{data.tournaments.length}</span>
+            {!isAddingTournament && (
+              <button
+                className={isEditingTournaments ? "primary-button compact-button" : "ghost-button compact-button"}
+                onClick={() => setIsEditingTournaments((current) => !current)}
+              >
+                {isEditingTournaments ? "Done" : "Edit"}
+              </button>
+            )}
+          </div>
         </div>
         {isAddingTournament ? (
           <form className="picker-create-row" onSubmit={addTournament}>
@@ -99,17 +127,44 @@ function TournamentsPage({
                 ).length;
 
                 return (
-                  <button
-                    className="selection-row"
+                  <div
+                    className={`selection-row tournament-row ${isEditingTournaments ? "is-editing" : ""}`}
                     key={tournament.id}
-                    onClick={() => navigate(paths.tournament(tournament))}
+                    onClick={() => {
+                      if (!isEditingTournaments) {
+                        navigate(paths.tournament(tournament));
+                      }
+                    }}
+                    onKeyDown={(event) => {
+                      if (
+                        !isEditingTournaments &&
+                        (event.key === "Enter" || event.key === " ")
+                      ) {
+                        event.preventDefault();
+                        navigate(paths.tournament(tournament));
+                      }
+                    }}
+                    role="button"
+                    tabIndex={0}
                   >
                     <span>
                       <strong>{tournament.name}</strong>
                       <em>{tournament.location || "No location"}</em>
                     </span>
                     <b>{gameCount} games</b>
-                  </button>
+                    {isEditingTournaments && (
+                      <button
+                        className="schedule-remove-button"
+                        disabled={deletingTournamentId === tournament.id}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void removeTournament(tournament);
+                        }}
+                      >
+                        {deletingTournamentId === tournament.id ? "Removing" : "Remove"}
+                      </button>
+                    )}
+                  </div>
                 );
               })}
             </div>

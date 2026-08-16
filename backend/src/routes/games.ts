@@ -51,6 +51,10 @@ export async function handleGamesRequest(request: ApiRequest): Promise<ApiRespon
     return finishPoint(gameId.value, request.body);
   }
 
+  if (request.method === "DELETE" && route.rest === "active-point") {
+    return deleteActivePointStart(gameId.value);
+  }
+
   const deleteEventMatch = route.rest.match(/^events\/([^/]+)$/);
   if (request.method === "DELETE" && deleteEventMatch) {
     return deleteEvent(gameId.value, deleteEventMatch[1] ?? "");
@@ -89,6 +93,12 @@ async function startPoint(gameId: Id, body: unknown): Promise<ApiResponse> {
 
   const initialSpot = parseCoordinate(body.initialSpot, "initialSpot");
   if ("error" in initialSpot) return badRequest(initialSpot.error);
+
+  const initialCatchVideoSeconds =
+    body.initialCatchVideoSeconds === undefined || body.initialCatchVideoSeconds === null
+      ? { value: 0 }
+      : parseInteger(body.initialCatchVideoSeconds, "initialCatchVideoSeconds");
+  if ("error" in initialCatchVideoSeconds) return badRequest(initialCatchVideoSeconds.error);
 
   let pullDetails: null | {
     pullerId: Id;
@@ -170,6 +180,22 @@ async function startPoint(gameId: Id, body: unknown): Promise<ApiResponse> {
             values (cast(:pointId as uuid), cast(:playerId as uuid), true)
           `,
           [sqlParam("pointId", pointId), sqlParam("playerId", playerId)],
+          transactionId,
+        );
+      }
+
+      if (startedOnOffense.value && initialThrowerId.value) {
+        await insertEvent(
+          {
+            gameId,
+            pointId,
+            eventType: "catch",
+            half: game.second_half_started ? 2 : 1,
+            playerId: initialThrowerId.value,
+            end: initialSpot.value,
+            fromPull: true,
+            videoSeconds: initialCatchVideoSeconds.value,
+          },
           transactionId,
         );
       }
@@ -321,6 +347,74 @@ async function finishPoint(gameId: Id, body: unknown): Promise<ApiResponse> {
   );
 }
 
+async function deleteActivePointStart(gameId: Id): Promise<ApiResponse> {
+  const data = await getBootstrapData();
+  const activePoint = data.points.find((point) => point.gameId === gameId && point.status === "active");
+  if (!activePoint) {
+    return jsonResponse(200, { data });
+  }
+
+  const pointEvents = data.events.filter((event) => event.pointId === activePoint.id);
+  if (
+    pointEvents.some(
+      (event) => event.eventType !== "pull" && !(event.eventType === "catch" && event.fromPull),
+    )
+  ) {
+    return badRequest("Only a point with no charted events can be undone from point start.");
+  }
+
+  return jsonResponse(
+    200,
+    await mutateAndReturnData(async (transactionId) => {
+      const currentActivePoint = await getActivePoint(gameId, transactionId);
+      if (!currentActivePoint?.id) return;
+
+      const currentPointEvents = await executeSql(
+        `
+          select event_type, payload
+          from events
+          where point_id = cast(:pointId as uuid)
+          order by video_seconds, created_at
+        `,
+        [sqlParam("pointId", currentActivePoint.id)],
+        transactionId,
+      );
+      const hasChartedEvents = currentPointEvents.rows.some((event) => {
+        const payload = parsePayload(event.payload);
+        return event.event_type !== "pull" && !(event.event_type === "catch" && payload.fromPull === true);
+      });
+      if (hasChartedEvents) return;
+
+      await executeSql(
+        "delete from events where point_id = cast(:pointId as uuid)",
+        [sqlParam("pointId", currentActivePoint.id)],
+        transactionId,
+      );
+      await executeSql(
+        "delete from point_players where point_id = cast(:pointId as uuid)",
+        [sqlParam("pointId", currentActivePoint.id)],
+        transactionId,
+      );
+      await executeSql(
+        "delete from points where id = cast(:pointId as uuid)",
+        [sqlParam("pointId", currentActivePoint.id)],
+        transactionId,
+      );
+      await updateGamePatch(
+        gameId,
+        {
+          currentPossession: currentActivePoint.started_on_offense ? "us" : "opponent",
+          activeThrowerId: null,
+          discX: null,
+          discY: null,
+          gameFinished: false,
+        },
+        transactionId,
+      );
+    }),
+  );
+}
+
 async function deleteEvent(gameId: Id, eventId: string): Promise<ApiResponse> {
   const parsedEventId = parseUuid(eventId, "eventId");
   if ("error" in parsedEventId) return badRequest(parsedEventId.error);
@@ -418,6 +512,17 @@ async function deleteEvent(gameId: Id, eventId: string): Promise<ApiResponse> {
           opponentScore: targetPoint.opponentScoreStart,
           gameFinished: false,
         };
+        nextPoints = nextPoints.map((point) =>
+          point.id === targetPoint.id
+            ? {
+                ...point,
+                ourScoreEnd: null,
+                opponentScoreEnd: null,
+                scoringTeam: null,
+                status: "active",
+              }
+            : point,
+        );
       }
 
       await executeSql(
@@ -470,6 +575,12 @@ function parseEventBody(body: Record<string, unknown>) {
       : parseBoolean(body.pullInBounds, "pullInBounds");
   if ("error" in pullInBounds) return pullInBounds;
 
+  const fromPull =
+    body.fromPull === undefined || body.fromPull === null
+      ? { value: null }
+      : parseBoolean(body.fromPull, "fromPull");
+  if ("error" in fromPull) return fromPull;
+
   return {
     value: {
       eventType: eventType.value,
@@ -479,6 +590,7 @@ function parseEventBody(body: Record<string, unknown>) {
       end: end.value,
       pullHangTimeSeconds: pullHangTimeSeconds.value,
       pullInBounds: pullInBounds.value,
+      fromPull: fromPull.value,
       videoSeconds: videoSeconds.value,
     },
   };
@@ -586,9 +698,9 @@ function rebuildActiveGameState(game: Game, activePoint: Point, events: Event[])
     .filter((event) => event.pointId === activePoint.id)
     .sort(compareEventsAscending)
     .forEach((event) => {
-      if (event.eventType === "pass") {
+      if (event.eventType === "pass" || event.eventType === "catch") {
         currentPossession = "us";
-        activeThrowerId = event.secondaryPlayerId;
+        activeThrowerId = event.eventType === "catch" ? event.playerId : event.secondaryPlayerId;
         discX = event.endX;
         discY = event.endY;
       }
@@ -666,4 +778,19 @@ function parseGameRoute(path: string) {
     gameId: decodeURIComponent(match[1] ?? ""),
     rest: match[2] ?? "",
   };
+}
+
+function parsePayload(value: unknown): Record<string, unknown> {
+  if (!value) return {};
+  if (typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>;
+  if (typeof value !== "string") return {};
+
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
+  }
 }

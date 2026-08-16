@@ -26,6 +26,10 @@ export async function handleTournamentsRequest(request: ApiRequest): Promise<Api
   const tournamentId = parseUuid(tournamentRoute.tournamentId, "tournamentId");
   if ("error" in tournamentId) return badRequest(tournamentId.error);
 
+  if (request.method === "DELETE" && tournamentRoute.rest === "") {
+    return removeTournament(tournamentId.value);
+  }
+
   if (request.method === "POST" && tournamentRoute.rest === "players/toggle") {
     return toggleTournamentPlayer(tournamentId.value, request.body);
   }
@@ -88,6 +92,40 @@ async function createTournament(body: unknown): Promise<ApiResponse> {
     .find((item) => item.name === name.value && item.location === location);
 
   return jsonResponse(201, { ...result, tournamentId: tournament?.id ?? null });
+}
+
+async function removeTournament(tournamentId: string): Promise<ApiResponse> {
+  return jsonResponse(
+    200,
+    await mutateAndReturnData(async (transactionId) => {
+      const games = await executeSql(
+        "select id from games where tournament_id = cast(:tournamentId as uuid)",
+        [sqlParam("tournamentId", tournamentId)],
+        transactionId,
+      );
+
+      await executeSql(
+        "delete from tournament_schedule_items where tournament_id = cast(:tournamentId as uuid)",
+        [sqlParam("tournamentId", tournamentId)],
+        transactionId,
+      );
+
+      for (const game of games.rows) {
+        await deleteGameTree(String(game.id), transactionId);
+      }
+
+      await executeSql(
+        "delete from tournament_players where tournament_id = cast(:tournamentId as uuid)",
+        [sqlParam("tournamentId", tournamentId)],
+        transactionId,
+      );
+      await executeSql(
+        "delete from tournaments where id = cast(:tournamentId as uuid)",
+        [sqlParam("tournamentId", tournamentId)],
+        transactionId,
+      );
+    }),
+  );
 }
 
 async function toggleTournamentPlayer(tournamentId: string, body: unknown): Promise<ApiResponse> {
@@ -289,19 +327,21 @@ async function moveScheduleItem(tournamentId: string, scheduleItemId: string, bo
         { ...dragged, day_number: targetDay.value },
         ...dayItems.slice(insertIndex),
       ];
-      const untouchedItems = remaining.filter((item) => item.day_number !== targetDay.value);
-      const counters = new Map<number, number>();
-      const nextItems = [...untouchedItems, ...reorderedDayItems]
-        .sort(
-          (a, b) =>
-            Number(a.day_number) - Number(b.day_number) || Number(a.sort_order) - Number(b.sort_order),
-        )
-        .map((item) => {
-          const dayNumber = Number(item.day_number);
-          const sortOrder = counters.get(dayNumber) ?? 0;
-          counters.set(dayNumber, sortOrder + 1);
-          return { id: String(item.id), dayNumber, sortOrder };
-        });
+      const dayNumbers = Array.from(
+        new Set([...remaining.map((item) => Number(item.day_number)), targetDay.value]),
+      ).sort((a, b) => a - b);
+      const nextItems = dayNumbers.flatMap((dayNumber) => {
+        const orderedDayItems =
+          dayNumber === targetDay.value
+            ? reorderedDayItems
+            : remaining.filter((item) => Number(item.day_number) === dayNumber);
+
+        return orderedDayItems.map((item, sortOrder) => ({
+          id: String(item.id),
+          dayNumber,
+          sortOrder,
+        }));
+      });
 
       await executeSql(
         `
@@ -455,7 +495,7 @@ async function deleteGameTree(gameId: string, transactionId: string): Promise<vo
 }
 
 function parseTournamentRoute(path: string) {
-  const match = path.match(/^\/api\/tournaments\/([^/]+)\/(.+)$/);
+  const match = path.match(/^\/api\/tournaments\/([^/]+)\/?(.*)$/);
   if (!match) return null;
 
   return {

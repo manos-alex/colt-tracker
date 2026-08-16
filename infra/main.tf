@@ -21,6 +21,7 @@ locals {
   frontend_origin_id = "${local.name_prefix}-frontend"
   api_origin_id      = "${local.name_prefix}-api"
   az_names           = slice(data.aws_availability_zones.available.names, 0, 2)
+  migration_files    = sort(fileset("${path.module}/migrations", "*.sql"))
 
   tags = {
     Application = var.project_name
@@ -246,9 +247,13 @@ data "archive_file" "migration_runner" {
     filename = "index.mjs"
   }
 
-  source {
-    content  = file("${path.module}/migrations/001_initial_schema.sql")
-    filename = "migrations/001_initial_schema.sql"
+  dynamic "source" {
+    for_each = local.migration_files
+
+    content {
+      content  = file("${path.module}/migrations/${source.value}")
+      filename = "migrations/${source.value}"
+    }
   }
 }
 

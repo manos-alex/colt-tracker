@@ -132,15 +132,19 @@ export function mapEvent(row: DbRow): Event {
     endY: nullableNumberValue(row.end_y),
     pullHangTimeSeconds: nullableNumberValue(payload.pullHangTimeSeconds),
     pullInBounds: nullableBooleanValue(payload.pullInBounds),
+    fromPull: nullableBooleanValue(payload.fromPull),
     videoSeconds: numberValue(row.video_seconds),
     createdAt: timestampValue(row.created_at),
   };
 }
 
-export function eventPayloadFromApi(event: Pick<Event, "pullHangTimeSeconds" | "pullInBounds">) {
+export function eventPayloadFromApi(
+  event: Pick<Event, "pullHangTimeSeconds" | "pullInBounds" | "fromPull">,
+) {
   return {
     ...(event.pullHangTimeSeconds === null ? {} : { pullHangTimeSeconds: event.pullHangTimeSeconds }),
     ...(event.pullInBounds === null ? {} : { pullInBounds: event.pullInBounds }),
+    ...(event.fromPull === null ? {} : { fromPull: event.fromPull }),
   };
 }
 

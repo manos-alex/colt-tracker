@@ -48,6 +48,12 @@ export async function createTournament(input: {
   });
 }
 
+export async function deleteTournament(tournamentId: Id): Promise<{ data: AppData }> {
+  return apiRequest(`/api/tournaments/${encodeURIComponent(tournamentId)}`, {
+    method: "DELETE",
+  });
+}
+
 export async function toggleTournamentPlayer(
   tournamentId: Id,
   playerId: Id,
@@ -143,6 +149,7 @@ export async function startGamePoint(input: {
   startedOnOffense: boolean;
   initialThrowerId: Id | null;
   initialSpot: FieldCoordinate;
+  initialCatchVideoSeconds?: number;
   pullDetails?: {
     pullerId: Id;
     hangTimeSeconds: number;
@@ -166,6 +173,7 @@ export async function recordGameEvent(input: {
   end?: FieldCoordinate | null;
   pullHangTimeSeconds?: number | null;
   pullInBounds?: boolean | null;
+  fromPull?: boolean | null;
   videoSeconds: number;
   gamePatch?: Partial<Game>;
   subPlayerId?: Id | null;
@@ -197,6 +205,12 @@ export async function deleteGameEvent(gameId: Id, eventId: Id): Promise<{ data: 
     `/api/games/${encodeURIComponent(gameId)}/events/${encodeURIComponent(eventId)}`,
     { method: "DELETE" },
   );
+}
+
+export async function deleteActiveGamePoint(gameId: Id): Promise<{ data: AppData }> {
+  return apiRequest(`/api/games/${encodeURIComponent(gameId)}/active-point`, {
+    method: "DELETE",
+  });
 }
 
 async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {

@@ -15,6 +15,7 @@ export const uuidPattern =
 
 export const eventTypes = new Set<EventType>([
   "pull",
+  "catch",
   "pass",
   "turnover",
   "throwaway",
@@ -205,6 +206,7 @@ export async function insertEvent(
     end?: FieldCoordinate | null;
     pullHangTimeSeconds?: number | null;
     pullInBounds?: boolean | null;
+    fromPull?: boolean | null;
     videoSeconds: number;
   },
   transactionId: string,
@@ -261,6 +263,9 @@ export async function insertEvent(
           ...(input.pullInBounds === null || input.pullInBounds === undefined
             ? {}
             : { pullInBounds: input.pullInBounds }),
+          ...(input.fromPull === null || input.fromPull === undefined
+            ? {}
+            : { fromPull: input.fromPull }),
         }),
       ),
     ],

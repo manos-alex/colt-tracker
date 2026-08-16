@@ -11,6 +11,7 @@ export type FieldCoordinate = {
 };
 export type EventType =
   | "pull"
+  | "catch"
   | "pass"
   | "turnover"
   | "throwaway"
@@ -125,6 +126,7 @@ export type Event = {
   endY: number | null;
   pullHangTimeSeconds: number | null;
   pullInBounds: boolean | null;
+  fromPull: boolean | null;
   videoSeconds: number;
   createdAt: string;
 };

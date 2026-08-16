@@ -23,6 +23,7 @@ import type {
   Possession,
 } from "../types";
 import {
+  deleteActiveGamePoint,
   deleteGameEvent,
   finishGamePoint,
   patchGame,
@@ -32,6 +33,14 @@ import {
 import { formatTimestamp, getYouTubeVideoId } from "../youtube";
 
 type DataSetter = Dispatch<SetStateAction<AppData>>;
+type ControlMode = "default" | "pass" | "drop" | "block" | "pickup" | "callahan" | "injury";
+type PointStartUndoState = {
+  starterIds: Id[];
+  startedOnOffense: boolean;
+  initialThrowerId: Id | null;
+  initialSpot: FieldCoordinate | null;
+  pullEvent: Event | null;
+};
 
 const id = () => crypto.randomUUID();
 const defaultDiscSpot: FieldCoordinate = { x: 20 / 110, y: 0.5 };
@@ -68,6 +77,36 @@ const isPointScoreEvent = (event: Event, point: Point | undefined, game: Game) =
   event.eventType === "callahan" ||
   isScoringPassEvent(event, point, game);
 
+const getPointStartUndoState = (
+  activePoint: Point | undefined,
+  pointPlayers: PointPlayer[],
+  pointEvents: Event[],
+): PointStartUndoState | null => {
+  if (!activePoint) return null;
+
+  const hasChartedEvents = pointEvents.some(
+    (event) => event.eventType !== "pull" && !(event.eventType === "catch" && event.fromPull),
+  );
+  if (hasChartedEvents) return null;
+
+  const starterIds = pointPlayers
+    .filter((item) => item.isStarter)
+    .map((item) => item.playerId);
+  if (starterIds.length !== 7) return null;
+
+  const pullEvent = pointEvents.find((event) => event.eventType === "pull") ?? null;
+  return {
+    starterIds,
+    startedOnOffense: activePoint.startedOnOffense,
+    initialThrowerId: activePoint.initialThrowerId,
+    initialSpot:
+      activePoint.initialDiscX !== null && activePoint.initialDiscY !== null
+        ? { x: activePoint.initialDiscX, y: activePoint.initialDiscY }
+        : null,
+    pullEvent,
+  };
+};
+
 function isScoringPassEvent(event: Event, point: Point | undefined, game: Game) {
   if (
     event.eventType !== "pass" ||
@@ -97,9 +136,9 @@ function rebuildActiveGameState(game: Game, activePoint: Point, events: Event[])
     .filter((event) => event.pointId === activePoint.id)
     .sort(compareEventsAscending)
     .forEach((event) => {
-      if (event.eventType === "pass") {
+      if (event.eventType === "pass" || event.eventType === "catch") {
         currentPossession = "us";
-        activeThrowerId = event.secondaryPlayerId;
+        activeThrowerId = event.eventType === "catch" ? event.playerId : event.secondaryPlayerId;
         discX = event.endX;
         discY = event.endY;
       }
@@ -176,6 +215,7 @@ function ChartingWorkspace({
   const pointEvents = activePoint
     ? gameEvents.filter((event) => event.pointId === activePoint.id)
     : [];
+  const pointPlayers = data.pointPlayers.filter((item) => item.pointId === activePoint?.id);
   const currentPointNumber = activePoint?.pointNumber ?? game.ourScore + game.opponentScore + 1;
   const currentHalfLabel = game.secondHalfStarted ? "2nd Half" : "1st Half";
   const attackingEndzone = game.startingEndzone
@@ -195,8 +235,10 @@ function ChartingWorkspace({
     try {
       const result = await mutation();
       setData(result.data);
+      return true;
     } catch (apiError) {
       setError(apiError instanceof Error ? apiError.message : "Unable to save game data.");
+      return false;
     }
   };
 
@@ -211,9 +253,9 @@ function ChartingWorkspace({
     gamePatch: Partial<Game> = {},
     subPlayerId: Id | null = null,
   ) => {
-    if (!activePoint) return;
+    if (!activePoint) return Promise.resolve(false);
 
-    void applyDataMutation(() =>
+    return applyDataMutation(() =>
       recordGameEvent({
         gameId: game.id,
         eventType,
@@ -229,7 +271,7 @@ function ChartingWorkspace({
   };
 
   const addTimelineEvent = (eventType: "half_time" | "full_time", gamePatch: Partial<Game> = {}) => {
-    void applyDataMutation(() =>
+    return applyDataMutation(() =>
       recordGameEvent({
         gameId: game.id,
         eventType,
@@ -240,7 +282,7 @@ function ChartingWorkspace({
   };
 
   const updateGame = (patch: Partial<Game>) => {
-    void applyDataMutation(() => patchGame(game.id, patch));
+    return applyDataMutation(() => patchGame(game.id, patch));
   };
 
   const startPoint = (
@@ -256,13 +298,14 @@ function ChartingWorkspace({
       releaseVideoSeconds: number;
     },
   ) => {
-    void applyDataMutation(() =>
+    return applyDataMutation(() =>
       startGamePoint({
         gameId: game.id,
         starterIds,
         startedOnOffense,
         initialThrowerId: startedOnOffense ? initialThrowerId : null,
         initialSpot,
+        initialCatchVideoSeconds: startedOnOffense ? getVideoSeconds() : undefined,
         pullDetails,
       }),
     );
@@ -278,9 +321,9 @@ function ChartingWorkspace({
       end?: FieldCoordinate | null;
     } = {},
   ) => {
-    if (!activePoint) return;
+    if (!activePoint) return Promise.resolve(false);
 
-    void applyDataMutation(() =>
+    return applyDataMutation(() =>
       finishGamePoint({
         gameId: game.id,
         scoringTeam,
@@ -296,19 +339,31 @@ function ChartingWorkspace({
 
   const removeEvent = (eventId: Id, shouldSeek = true) => {
     const eventToRemove = data.events.find((event) => event.id === eventId);
-    if (!eventToRemove) return;
+    if (!eventToRemove) return Promise.resolve(false);
 
     if (shouldSeek) {
       seekVideo(eventToRemove.videoSeconds);
     }
 
-    void applyDataMutation(() => deleteGameEvent(game.id, eventId));
+    return applyDataMutation(() => deleteGameEvent(game.id, eventId));
   };
 
-  const undoLastEvent = () => {
-    if (!latestEvent) return;
+  const undoLatestEventAtCurrentTimestamp = () => {
+    const currentVideoSeconds = getVideoSeconds();
+    const eventToUndo = gameEvents
+      .filter((event) => event.videoSeconds === currentVideoSeconds)
+      .sort(compareEventsDescending)[0];
 
-    removeEvent(latestEvent.id);
+    if (!eventToUndo) {
+      setError(`No event recorded at ${formatTimestamp(currentVideoSeconds)} to undo.`);
+      return Promise.resolve(false);
+    }
+
+    return removeEvent(eventToUndo.id);
+  };
+
+  const undoActivePointStart = () => {
+    return applyDataMutation(() => deleteActiveGamePoint(game.id));
   };
 
   const editFinishedGame = () => {
@@ -317,11 +372,11 @@ function ChartingWorkspace({
       .sort(compareEventsDescending)[0];
 
     if (fullTimeEvent) {
-      removeEvent(fullTimeEvent.id, false);
+      void removeEvent(fullTimeEvent.id, false);
       return;
     }
 
-    updateGame({ gameFinished: false });
+    void updateGame({ gameFinished: false });
   };
 
   return (
@@ -342,7 +397,7 @@ function ChartingWorkspace({
             currentPointNumber={currentPointNumber}
             attackingEndzone={attackingEndzone}
             availablePlayers={availablePlayers}
-            pointPlayers={data.pointPlayers.filter((item) => item.pointId === activePoint?.id)}
+            pointPlayers={pointPlayers}
             events={pointEvents}
             players={data.players}
             latestEvent={latestEvent}
@@ -351,7 +406,8 @@ function ChartingWorkspace({
             addTimelineEvent={addTimelineEvent}
             updateGame={updateGame}
             finishPoint={finishPoint}
-            undoLastEvent={undoLastEvent}
+            undoLatestEventAtCurrentTimestamp={undoLatestEventAtCurrentTimestamp}
+            undoActivePointStart={undoActivePointStart}
             editFinishedGame={editFinishedGame}
             getVideoSeconds={getVideoSeconds}
           />
@@ -362,7 +418,6 @@ function ChartingWorkspace({
           points={data.points}
           players={data.players}
           seekVideo={seekVideo}
-          deleteEvent={removeEvent}
         />
       </div>
     </section>
@@ -441,19 +496,35 @@ function YouTubeEmbed({
   videoUrl: string;
   playerRef: MutableRefObject<YouTubePlayer | null>;
 }) {
-  const elementId = useMemo(() => `youtube-${id()}`, []);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const playerElementId = useMemo(() => `youtube-${id()}`, []);
   const videoId = getYouTubeVideoId(videoUrl);
 
   useEffect(() => {
-    if (!videoId) return;
+    if (!videoId) {
+      playerRef.current?.destroy();
+      playerRef.current = null;
+      return;
+    }
 
     let cancelled = false;
+    let previousReady: typeof window.onYouTubeIframeAPIReady | undefined;
+    let installedReadyHandler = false;
 
     const createPlayer = () => {
-      if (cancelled || !window.YT) return;
+      if (cancelled || !window.YT?.Player || !containerRef.current) return;
+
       playerRef.current?.destroy();
-      playerRef.current = new window.YT.Player(elementId, {
+      containerRef.current.innerHTML = "";
+
+      const playerElement = document.createElement("div");
+      playerElement.id = playerElementId;
+      containerRef.current.appendChild(playerElement);
+
+      playerRef.current = new window.YT.Player(playerElementId, {
+        height: "100%",
         videoId,
+        width: "100%",
         playerVars: { modestbranding: 1, rel: 0 },
       });
     };
@@ -471,7 +542,8 @@ function YouTubeEmbed({
         document.body.appendChild(script);
       }
 
-      const previousReady = window.onYouTubeIframeAPIReady;
+      previousReady = window.onYouTubeIframeAPIReady;
+      installedReadyHandler = true;
       window.onYouTubeIframeAPIReady = () => {
         previousReady?.();
         createPlayer();
@@ -480,8 +552,16 @@ function YouTubeEmbed({
 
     return () => {
       cancelled = true;
+      if (installedReadyHandler) {
+        window.onYouTubeIframeAPIReady = previousReady;
+      }
+      playerRef.current?.destroy();
+      playerRef.current = null;
+      if (containerRef.current) {
+        containerRef.current.innerHTML = "";
+      }
     };
-  }, [elementId, playerRef, videoId]);
+  }, [playerElementId, playerRef, videoId]);
 
   if (!videoId) {
     return (
@@ -491,7 +571,7 @@ function YouTubeEmbed({
     );
   }
 
-  return <div className="video-frame" id={elementId} />;
+  return <div className="video-frame" ref={containerRef} />;
 }
 
 function ControlPanel({
@@ -509,7 +589,8 @@ function ControlPanel({
   addTimelineEvent,
   updateGame,
   finishPoint,
-  undoLastEvent,
+  undoLatestEventAtCurrentTimestamp,
+  undoActivePointStart,
   editFinishedGame,
   getVideoSeconds,
 }: {
@@ -534,7 +615,7 @@ function ControlPanel({
       inBounds: boolean;
       releaseVideoSeconds: number;
     },
-  ) => void;
+  ) => Promise<boolean>;
   addEvent: (
     eventType: EventType,
     playerId?: Id | null,
@@ -545,9 +626,12 @@ function ControlPanel({
     },
     gamePatch?: Partial<Game>,
     subPlayerId?: Id | null,
-  ) => void;
-  addTimelineEvent: (eventType: "half_time" | "full_time", gamePatch?: Partial<Game>) => void;
-  updateGame: (patch: Partial<Game>) => void;
+  ) => Promise<boolean>;
+  addTimelineEvent: (
+    eventType: "half_time" | "full_time",
+    gamePatch?: Partial<Game>,
+  ) => Promise<boolean>;
+  updateGame: (patch: Partial<Game>) => Promise<boolean>;
   finishPoint: (
     scoringTeam: Possession,
     eventType?: EventType,
@@ -557,8 +641,9 @@ function ControlPanel({
       start?: FieldCoordinate | null;
       end?: FieldCoordinate | null;
     },
-  ) => void;
-  undoLastEvent: () => void;
+  ) => Promise<boolean>;
+  undoLatestEventAtCurrentTimestamp: () => Promise<boolean>;
+  undoActivePointStart: () => Promise<boolean>;
   editFinishedGame: () => void;
   getVideoSeconds: () => number;
 }) {
@@ -571,9 +656,7 @@ function ControlPanel({
     defaultDiscSpotForAttack(attackingEndzone),
   );
   const [subPlayerId, setSubPlayerId] = useState("");
-  const [mode, setMode] = useState<
-    "default" | "pass" | "drop" | "block" | "pickup" | "callahan" | "injury"
-  >("default");
+  const [mode, setMode] = useState<ControlMode>("default");
   const [receiverId, setReceiverId] = useState("");
   const [passEndSpot, setPassEndSpot] = useState<FieldCoordinate | null>(null);
   const [pickupPlayerId, setPickupPlayerId] = useState("");
@@ -588,8 +671,14 @@ function ControlPanel({
   const [pullReleaseVideoSeconds, setPullReleaseVideoSeconds] = useState(0);
   const [pullLandingSpot, setPullLandingSpot] = useState<FieldCoordinate | null>(null);
   const [pullInBounds, setPullInBounds] = useState(true);
+  const skipNextSetupResetRef = useRef(false);
 
   useEffect(() => {
+    if (skipNextSetupResetRef.current) {
+      skipNextSetupResetRef.current = false;
+      return;
+    }
+
     setStarterIds([]);
     setLineConfirmed(false);
     setInitialSpot(defaultDiscSpotForAttack(attackingEndzone));
@@ -635,13 +724,35 @@ function ControlPanel({
     }
   }, [initialThrowerId, starterIds]);
 
+  const latestPointEvent = useMemo(
+    () => [...events].sort(compareEventsDescending)[0],
+    [events],
+  );
+  const needsPickupPrompt = Boolean(
+    activePoint &&
+      game.currentPossession === "us" &&
+      !game.activeThrowerId &&
+      latestPointEvent &&
+      (latestPointEvent.eventType === "block" ||
+        latestPointEvent.eventType === "opponent_turnover"),
+  );
+
   useEffect(() => {
-    if (activePoint && game.currentPossession === "us" && !game.activeThrowerId && mode === "default") {
+    if (!activePoint) return;
+
+    if (needsPickupPrompt && mode === "default") {
       setPickupPlayerId("");
       setPickupSpot(null);
       setMode("pickup");
+      return;
     }
-  }, [activePoint, game.activeThrowerId, game.currentPossession, mode]);
+
+    if (!needsPickupPrompt && mode === "pickup") {
+      setPickupPlayerId("");
+      setPickupSpot(null);
+      setMode("default");
+    }
+  }, [activePoint, mode, needsPickupPrompt]);
 
   const playerName = (playerId: Id | null) =>
     players.find((player) => player.id === playerId)?.name ?? "Unassigned";
@@ -707,11 +818,8 @@ function ControlPanel({
   const passWillScore = passEndSpot ? isGoalSpot(passEndSpot, attackingEndzone) : false;
   const boundaryButtonLabel = game.secondHalfStarted ? "Game Finished" : "Half Time";
   const canUseBoundaryButton = game.secondHalfStarted || currentPointNumber > 1;
-  const undoButton = (
-    <button className="undo-button" disabled={!latestEvent} onClick={undoLastEvent}>
-      Undo
-    </button>
-  );
+  const pointStartUndoState = getPointStartUndoState(activePoint, pointPlayers, events);
+  const canUndo = Boolean(pointStartUndoState || latestEvent);
 
   const renderPanel = (children: ReactNode) => (
     <aside className="control-panel">{children}</aside>
@@ -745,8 +853,86 @@ function ControlPanel({
     setSubPlayerId("");
   };
 
+  const resetPullSetup = () => {
+    setDefenseSetupStep("timer");
+    setPullerId("");
+    setPullTimerStatus("idle");
+    setPullStartedAt(null);
+    setPullElapsedSeconds(0);
+    setPullReleaseVideoSeconds(0);
+    setPullLandingSpot(null);
+    setPullInBounds(true);
+  };
+
+  const backToLineSelection = () => {
+    setLineConfirmed(false);
+    setInitialThrowerId("");
+    setInitialSpot(defaultDiscSpotForAttack(attackingEndzone));
+    resetPullSetup();
+  };
+
+  const restorePointStartSetup = (snapshot: PointStartUndoState) => {
+    const pullEvent = snapshot.pullEvent;
+    const pullLandingSpot =
+      pullEvent && pullEvent.endX !== null && pullEvent.endY !== null
+        ? { x: pullEvent.endX, y: pullEvent.endY }
+        : null;
+
+    setStarterIds(snapshot.starterIds);
+    setLineConfirmed(true);
+    cancelMode();
+
+    if (snapshot.startedOnOffense) {
+      setInitialThrowerId(snapshot.initialThrowerId ?? "");
+      setInitialSpot(snapshot.initialSpot ?? defaultDiscSpotForAttack(attackingEndzone));
+      resetPullSetup();
+      return;
+    }
+
+    setInitialThrowerId("");
+    setInitialSpot(defaultDiscSpotForAttack(attackingEndzone));
+    setDefenseSetupStep(pullEvent ? "landing" : "timer");
+    setPullerId(pullEvent?.playerId ?? "");
+    setPullTimerStatus(pullEvent ? "stopped" : "idle");
+    setPullStartedAt(null);
+    setPullElapsedSeconds(pullEvent?.pullHangTimeSeconds ?? 0);
+    setPullReleaseVideoSeconds(pullEvent?.videoSeconds ?? 0);
+    setPullLandingSpot(pullLandingSpot);
+    setPullInBounds(pullEvent?.pullInBounds ?? true);
+  };
+
+  const undoPointStart = () => {
+    if (!pointStartUndoState) return;
+
+    const snapshot = pointStartUndoState;
+    skipNextSetupResetRef.current = true;
+    void undoActivePointStart().then((saved) => {
+      if (saved) {
+        restorePointStartSetup(snapshot);
+        return;
+      }
+
+      skipNextSetupResetRef.current = false;
+    });
+  };
+
+  const handleUndo = () => {
+    if (pointStartUndoState) {
+      undoPointStart();
+      return;
+    }
+
+    void undoLatestEventAtCurrentTimestamp();
+  };
+
+  const undoButton = (
+    <button className="undo-button" disabled={!canUndo} onClick={handleUndo}>
+      Undo
+    </button>
+  );
+
   const confirmGameSetup = () => {
-    updateGame({
+    void updateGame({
       currentPossession: setupPossession,
       startingPossession: setupPossession,
       startingEndzone: setupEndzone,
@@ -758,7 +944,7 @@ function ControlPanel({
   const startSecondHalf = () => {
     if (!game.startingPossession || game.secondHalfStarted) return;
 
-    addTimelineEvent("half_time", {
+    void addTimelineEvent("half_time", {
       currentPossession: oppositePossession(game.startingPossession),
       activeThrowerId: null,
       discX: null,
@@ -772,7 +958,7 @@ function ControlPanel({
   };
 
   const finishGame = () => {
-    addTimelineEvent("full_time", {
+    void addTimelineEvent("full_time", {
       gameFinished: true,
       activeThrowerId: null,
       discX: null,
@@ -832,7 +1018,7 @@ function ControlPanel({
   const confirmDefensivePull = () => {
     if (!pullerId || !pullLandingSpot) return;
 
-    startPoint(starterIds, false, null, defaultDiscSpotForAttack(attackingEndzone), {
+    void startPoint(starterIds, false, null, defaultDiscSpotForAttack(attackingEndzone), {
       pullerId,
       hangTimeSeconds: Math.round(pullElapsedSeconds * 100) / 100,
       landingSpot: pullLandingSpot,
@@ -844,23 +1030,31 @@ function ControlPanel({
   const submitPass = () => {
     if (!game.activeThrowerId || !receiverId || !passEndSpot) return;
 
-    if (passWillScore) {
-      finishPoint("us", "pass", game.activeThrowerId, receiverId, {
-        start: discSpot,
-        end: passEndSpot,
-      });
-    } else {
-      addEvent("pass", game.activeThrowerId, receiverId, {
-        start: discSpot,
-        end: passEndSpot,
-      }, {
-        activeThrowerId: receiverId,
-        discX: passEndSpot.x,
-        discY: passEndSpot.y,
-      });
-    }
+    void (async () => {
+      const saved = passWillScore
+        ? await finishPoint("us", "pass", game.activeThrowerId, receiverId, {
+            start: discSpot,
+            end: passEndSpot,
+          })
+        : await addEvent(
+            "pass",
+            game.activeThrowerId,
+            receiverId,
+            {
+              start: discSpot,
+              end: passEndSpot,
+            },
+            {
+              activeThrowerId: receiverId,
+              discX: passEndSpot.x,
+              discY: passEndSpot.y,
+            },
+          );
 
-    cancelMode();
+      if (saved) {
+        cancelMode();
+      }
+    })();
   };
 
   const moveToPickup = () => {
@@ -872,36 +1066,57 @@ function ControlPanel({
   const submitBlock = () => {
     if (!pickupPlayerId) return;
 
-    addEvent("block", pickupPlayerId, null, {}, {
-      currentPossession: "us",
-      activeThrowerId: null,
-      discX: null,
-      discY: null,
-    });
-    moveToPickup();
+    void (async () => {
+      const saved = await addEvent("block", pickupPlayerId, null, {}, {
+        currentPossession: "us",
+        activeThrowerId: null,
+        discX: null,
+        discY: null,
+      });
+
+      if (saved) {
+        moveToPickup();
+      }
+    })();
   };
 
   const submitOpponentTurnover = () => {
-    addEvent("opponent_turnover", null, null, {}, {
-      currentPossession: "us",
-      activeThrowerId: null,
-      discX: null,
-      discY: null,
-    });
-    moveToPickup();
+    void (async () => {
+      const saved = await addEvent("opponent_turnover", null, null, {}, {
+        currentPossession: "us",
+        activeThrowerId: null,
+        discX: null,
+        discY: null,
+      });
+
+      if (saved) {
+        moveToPickup();
+      }
+    })();
   };
 
   const submitPickup = () => {
     if (!pickupPlayerId || !pickupSpot) return;
 
-    addEvent("pickup", pickupPlayerId, null, {
-      end: pickupSpot,
-    }, {
-      activeThrowerId: pickupPlayerId,
-      discX: pickupSpot.x,
-      discY: pickupSpot.y,
-    });
-    cancelMode();
+    void (async () => {
+      const saved = await addEvent(
+        "pickup",
+        pickupPlayerId,
+        null,
+        {
+          end: pickupSpot,
+        },
+        {
+          activeThrowerId: pickupPlayerId,
+          discX: pickupSpot.x,
+          discY: pickupSpot.y,
+        },
+      );
+
+      if (saved) {
+        cancelMode();
+      }
+    })();
   };
 
   const opponentPossessionPatch: Partial<Game> = {
@@ -912,35 +1127,43 @@ function ControlPanel({
   };
 
   const submitThrowaway = () => {
-    addEvent("throwaway", game.activeThrowerId, null, {
+    void addEvent("throwaway", game.activeThrowerId, null, {
       start: game.activeThrowerId ? discSpot : null,
       end: game.activeThrowerId ? discSpot : null,
     }, opponentPossessionPatch);
   };
 
   const submitOpponentBlock = () => {
-    addEvent("opponent_block", game.activeThrowerId, null, {}, opponentPossessionPatch);
+    void addEvent("opponent_block", game.activeThrowerId, null, {}, opponentPossessionPatch);
   };
 
   const submitDrop = () => {
     if (!receiverId) return;
 
-    addEvent("drop", receiverId, game.activeThrowerId, {}, opponentPossessionPatch);
-    cancelMode();
+    void addEvent("drop", receiverId, game.activeThrowerId, {}, opponentPossessionPatch).then(
+      (saved) => {
+        if (saved) {
+          cancelMode();
+        }
+      },
+    );
   };
 
   const submitInjury = () => {
     if (!canSubmitInjury) return;
 
-    addEvent(
+    void addEvent(
       "injury",
       injuredPlayerId,
       subPlayerId,
       {},
       game.activeThrowerId === injuredPlayerId ? { activeThrowerId: subPlayerId } : {},
       subPlayerId,
-    );
-    cancelMode();
+    ).then((saved) => {
+      if (saved) {
+        cancelMode();
+      }
+    });
   };
 
   if (mode === "pass") {
@@ -1085,8 +1308,11 @@ function ControlPanel({
             className="score-button"
             disabled={!callahanPlayerId}
             onClick={() => {
-              finishPoint("us", "callahan", callahanPlayerId);
-              cancelMode();
+              void finishPoint("us", "callahan", callahanPlayerId).then((saved) => {
+                if (saved) {
+                  cancelMode();
+                }
+              });
             }}
           >
             Confirm Callahan
@@ -1193,7 +1419,14 @@ function ControlPanel({
       ) : !activePoint ? (
         <div className="control-section">
           <div className="section-title">
-            <h2>{pointSetupTitle}</h2>
+            <div className="setup-step-title">
+              {lineConfirmed && (
+                <button className="ghost-button compact-button" onClick={backToLineSelection}>
+                  Back
+                </button>
+              )}
+              <h2>{pointSetupTitle}</h2>
+            </div>
             <div className="section-actions">
               {!lineConfirmed && (
                 <button
@@ -1234,7 +1467,9 @@ function ControlPanel({
               <button
                 className="primary-button"
                 disabled={!canStartPoint}
-                onClick={() => startPoint(starterIds, true, initialThrowerId, initialSpot)}
+                onClick={() => {
+                  void startPoint(starterIds, true, initialThrowerId, initialSpot);
+                }}
               >
                 Start Point
               </button>
@@ -1372,7 +1607,9 @@ function ControlPanel({
               <div className="event-button-grid">
                 <button
                   className="danger-button"
-                  onClick={() => finishPoint("opponent", "opponent_score")}
+                  onClick={() => {
+                    void finishPoint("opponent", "opponent_score");
+                  }}
                 >
                   Opponent Score
                 </button>
@@ -1587,14 +1824,12 @@ function EventLog({
   points,
   players,
   seekVideo,
-  deleteEvent,
 }: {
   game: Game;
   events: Event[];
   points: Point[];
   players: Player[];
   seekVideo: (seconds: number) => void;
-  deleteEvent: (eventId: Id) => void;
 }) {
   const recentEvents = [...events].sort(compareEventsDescending);
   const playerName = (playerId: Id | null) =>
@@ -1623,19 +1858,6 @@ function EventLog({
             }
           }}
         >
-          <button
-            type="button"
-            className="event-delete-button"
-            aria-label={`Delete ${labelEvent(event, point, game)} event at ${formatTimestamp(
-              event.videoSeconds,
-            )}`}
-            onClick={(clickEvent) => {
-              clickEvent.stopPropagation();
-              deleteEvent(event.id);
-            }}
-          >
-            Delete
-          </button>
           <span>{formatTimestamp(event.videoSeconds)}</span>
           <strong>{labelEvent(event, point, game)}</strong>
           <em>{eventDescription(event, playerName)}</em>
@@ -1662,6 +1884,10 @@ function eventDescription(event: Event, playerName: (playerId: Id | null) => str
     return primary;
   }
 
+  if (event.eventType === "catch") {
+    return primary;
+  }
+
   if (event.eventType === "pull") {
     const hangTime =
       event.pullHangTimeSeconds === null ? "" : `${event.pullHangTimeSeconds.toFixed(2)}s`;
@@ -1676,6 +1902,10 @@ function eventDescription(event: Event, playerName: (playerId: Id | null) => str
 function labelEvent(event: Event, point: Point | undefined, game: Game) {
   if (isScoringPassEvent(event, point, game)) {
     return "Score";
+  }
+
+  if (event.eventType === "catch" && event.fromPull) {
+    return "Pull Catch";
   }
 
   return event.eventType

@@ -6,7 +6,9 @@ declare global {
       Player: new (
         elementId: string,
         options: {
+          height?: string;
           videoId: string;
+          width?: string;
           playerVars?: Record<string, number>;
           events?: {
             onReady?: () => void;
