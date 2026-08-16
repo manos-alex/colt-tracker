@@ -40,6 +40,18 @@ npm run dev
 npm run build
 ```
 
+## Dev Deployment Scripts
+
+```sh
+scripts/deploy-dev-infra.sh
+scripts/deploy-dev-backend.sh
+scripts/deploy-dev-frontend.sh
+scripts/deploy-dev-app.sh
+```
+
+The scripts default to `AWS_PROFILE=colt-dev-deploy` and `AWS_REGION=us-east-1` when those
+environment variables are not already set.
+
 ## Local Backend Environment
 
 Create a repo-root `.env` file for local backend development:
