@@ -351,11 +351,11 @@ function ChartingWorkspace({
   const undoLatestEventAtCurrentTimestamp = () => {
     const currentVideoSeconds = getVideoSeconds();
     const eventToUndo = gameEvents
-      .filter((event) => event.videoSeconds === currentVideoSeconds)
+      .filter((event) => event.videoSeconds <= currentVideoSeconds)
       .sort(compareEventsDescending)[0];
 
     if (!eventToUndo) {
-      setError(`No event recorded at ${formatTimestamp(currentVideoSeconds)} to undo.`);
+      setError(`No event recorded at or before ${formatTimestamp(currentVideoSeconds)} to undo.`);
       return Promise.resolve(false);
     }
 
