@@ -52,9 +52,12 @@ trusted_principal_arns = [
   "arn:aws:iam::123456789012:role/YOUR_ADMIN_OR_IDENTITY_CENTER_ROLE"
 ]
 
-github_repository  = "manos-alex/colt-tracker"
+github_repository  = "manos-alex@142343937/colt-tracker@1311105686"
 github_environment = "production"
 ```
+
+The numeric suffixes are GitHub's immutable owner and repository IDs. This repository's OIDC
+subject template includes them, so the AWS trust policy must use this exact value.
 
 Then apply it with credentials allowed to manage IAM:
 
