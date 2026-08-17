@@ -13,7 +13,7 @@ No long-lived AWS access key belongs in GitHub.
 The committed `environments/prod.tfvars` controls production sizing. The current defaults are:
 
 - AWS region: `us-east-1`
-- Lambda reserved concurrency: `20`
+- Lambda reserved concurrency: disabled to preserve the account's unreserved concurrency pool
 - API throttling: `50` requests/second with a burst of `100`
 - Aurora Serverless v2: `0` minimum and `1` maximum ACUs, with auto-pause after 5 idle minutes
 - Database deletion protection: enabled
