@@ -13,6 +13,11 @@ output "frontend_cloudfront_distribution_id" {
   value       = aws_cloudfront_distribution.frontend.id
 }
 
+output "frontend_url" {
+  description = "Canonical URL for the deployed frontend."
+  value       = "https://${var.frontend_domain_name != "" ? var.frontend_domain_name : aws_cloudfront_distribution.frontend.domain_name}"
+}
+
 output "api_endpoint" {
   description = "HTTP API Gateway endpoint."
   value       = aws_apigatewayv2_api.api.api_endpoint

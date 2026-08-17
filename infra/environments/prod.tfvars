@@ -1,4 +1,6 @@
 environment                       = "prod"
+frontend_domain_name              = "colttracker.com"
+frontend_hosted_zone_id           = "Z1020035Q2V1AWQK3ZYV"
 api_lambda_reserved_concurrency   = null
 api_throttling_burst_limit        = 100
 api_throttling_rate_limit         = 50
@@ -6,4 +8,4 @@ database_deletion_protection      = true
 database_min_capacity             = 0
 database_max_capacity             = 1
 database_seconds_until_auto_pause = 300
-api_cors_allowed_origins          = ["https://d2xetjjktw3gp.cloudfront.net"]
+api_cors_allowed_origins          = ["https://colttracker.com"]

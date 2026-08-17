@@ -22,6 +22,18 @@ variable "frontend_bucket_name" {
   default     = ""
 }
 
+variable "frontend_domain_name" {
+  description = "Optional custom domain name served by the CloudFront distribution."
+  type        = string
+  default     = ""
+}
+
+variable "frontend_hosted_zone_id" {
+  description = "Route 53 public hosted zone ID for the custom frontend domain. Required when frontend_domain_name is set."
+  type        = string
+  default     = ""
+}
+
 variable "api_cors_allowed_origins" {
   description = "Origins allowed to call the HTTP API. Tighten this after the frontend domain is stable."
   type        = list(string)
@@ -116,4 +128,14 @@ variable "database_enable_data_api" {
   description = "Whether to enable the Aurora Data API for controlled operational tasks like migrations."
   type        = bool
   default     = true
+}
+
+check "frontend_custom_domain" {
+  assert {
+    condition = (
+      (var.frontend_domain_name == "" && var.frontend_hosted_zone_id == "") ||
+      (var.frontend_domain_name != "" && var.frontend_hosted_zone_id != "")
+    )
+    error_message = "frontend_domain_name and frontend_hosted_zone_id must either both be set or both be empty."
+  }
 }

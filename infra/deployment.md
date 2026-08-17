@@ -52,7 +52,6 @@ Security items still needed before production:
 
 - Replace wildcard dev CORS with the real frontend origin.
 - Add auth before exposing write APIs.
-- Add a custom domain and ACM certificate.
 - Add remote Terraform state with locking.
 - Add CI checks for build, tests, Terraform fmt, Terraform validate, and reviewed plans.
 - Decide whether production deploys require manual approval.
