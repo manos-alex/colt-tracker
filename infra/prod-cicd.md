@@ -18,11 +18,9 @@ The committed `environments/prod.tfvars` controls production sizing. The current
 - Aurora Serverless v2: `0` minimum and `1` maximum ACUs, with auto-pause after 5 idle minutes
 - Database deletion protection: enabled
 
-The first deployment uses the generated CloudFront domain. After that deployment, replace
-`REPLACE_WITH_PROD_FRONTEND_DOMAIN` in `environments/prod.tfvars` with the reported domain, for
-example `https://d123example.cloudfront.net`, commit the change, and deploy again. Browser API calls
-already use the same CloudFront origin; this follow-up also makes the API Gateway CORS configuration
-match the real frontend origin.
+The generated production CloudFront domain is `https://d2xetjjktw3gp.cloudfront.net`, and
+`environments/prod.tfvars` uses it as the API Gateway CORS origin. Browser API calls use this same
+CloudFront origin.
 
 Custom DNS is not part of the current Terraform stack. Adding a domain requires an ACM certificate
 in `us-east-1`, a CloudFront alias, and DNS validation/records (usually Route 53).
@@ -135,7 +133,8 @@ run the workflow once more.
 ## Failure And Recovery Notes
 
 - A failed Terraform apply can be safely rerun; state locking prevents concurrent mutation.
-- Migrations are versioned and skip versions already recorded in `schema_migrations`.
+- Migrations are versioned and skip versions already recorded in `schema_migrations`. The workflow
+  retries while an auto-paused Aurora database resumes.
 - Frontend publishing happens only after infrastructure and migrations succeed.
 - Production database deletion protection is enabled, so destroying the stack requires an explicit
   configuration change before Terraform can delete Aurora.
