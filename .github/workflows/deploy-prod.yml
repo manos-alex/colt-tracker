@@ -1,0 +1,137 @@
+name: Deploy Production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Build and validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build frontend and backend
+        run: npm run build
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.15.4
+
+      - name: Check and validate Terraform
+        run: |
+          terraform -chdir=infra fmt -check -recursive
+          terraform -chdir=infra init -backend=false -input=false
+          terraform -chdir=infra validate
+
+  deploy:
+    name: Plan and deploy production
+    if: github.ref == 'refs/heads/main'
+    needs: validate
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "false"
+      TF_VAR_admin_site_password: ${{ secrets.ADMIN_SITE_PASSWORD }}
+      TF_VAR_viewer_site_password: ${{ secrets.VIEWER_SITE_PASSWORD }}
+      TF_VAR_session_secret: ${{ secrets.SESSION_SECRET }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build frontend and backend
+        run: npm run build
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.15.4
+          terraform_wrapper: false
+
+      - name: Configure short-lived AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ vars.AWS_REGION }}
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-session-name: colt-tracker-prod-${{ github.run_id }}
+
+      - name: Verify AWS identity
+        run: aws sts get-caller-identity
+
+      - name: Initialize production Terraform state
+        run: |
+          terraform -chdir=infra init -reconfigure \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="key=prod/terraform.tfstate" \
+            -backend-config="region=${{ vars.AWS_REGION }}" \
+            -backend-config="dynamodb_table=${{ vars.TF_LOCK_TABLE }}" \
+            -backend-config="encrypt=true"
+
+      - name: Check and validate Terraform
+        run: |
+          terraform -chdir=infra fmt -check -recursive
+          terraform -chdir=infra validate
+
+      - name: Plan production changes
+        run: terraform -chdir=infra plan -var-file=environments/prod.tfvars -out=prod.tfplan
+
+      - name: Apply production plan
+        run: terraform -chdir=infra apply -auto-approve prod.tfplan
+
+      - name: Run database migrations
+        run: |
+          aws lambda invoke \
+            --function-name "$(terraform -chdir=infra output -raw migration_runner_function_name)" \
+            /tmp/colt-tracker-prod-migrations.json \
+            > /tmp/colt-tracker-prod-migration-metadata.json
+          cat /tmp/colt-tracker-prod-migrations.json
+          jq -e 'has("FunctionError") | not' /tmp/colt-tracker-prod-migration-metadata.json
+
+      - name: Publish frontend
+        run: |
+          aws s3 sync dist/ "s3://$(terraform -chdir=infra output -raw frontend_bucket_name)" --delete
+          aws cloudfront create-invalidation \
+            --distribution-id "$(terraform -chdir=infra output -raw frontend_cloudfront_distribution_id)" \
+            --paths "/*"
+
+      - name: Smoke test production
+        run: |
+          APP_URL="https://$(terraform -chdir=infra output -raw frontend_cloudfront_domain_name)"
+          curl --fail --show-error --silent --retry 8 --retry-delay 10 --retry-all-errors "${APP_URL}/api/health"
+          curl --fail --show-error --silent --retry 8 --retry-delay 10 --retry-all-errors "${APP_URL}/api/session" > /dev/null
+          echo "Production deployed to ${APP_URL}" >> "${GITHUB_STEP_SUMMARY}"

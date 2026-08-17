@@ -153,6 +153,8 @@ Production should use the same Terraform code but initialize with `backend/prod.
 8. Smoke test API health and session handling.
 9. Upload frontend assets and invalidate the prod CloudFront distribution.
 
+The implemented GitHub Actions and AWS OIDC setup is documented in [prod-cicd.md](prod-cicd.md).
+
 ## Backend Routes
 
 The deployed API Lambda and local backend share the same route handler:

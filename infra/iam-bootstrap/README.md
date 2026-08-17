@@ -1,8 +1,13 @@
 # IAM Bootstrap
 
-This stack creates the IAM role used for manual dev deployments:
+This stack creates the IAM roles used for deployments:
 
 - `ColtTrackerDevDeployRole`
+- `ColtTrackerProdDeployRole`
+
+It also creates the GitHub Actions OIDC provider. The production role trust policy accepts only
+tokens for the `manos-alex/colt-tracker` repository and its `production` GitHub environment. GitHub
+receives short-lived AWS credentials; do not create access keys for CI/CD.
 
 The role is Terraform-managed to avoid console-created drift. You still need to run this bootstrap
 stack once with credentials that can create IAM roles and policies.
@@ -44,6 +49,26 @@ terraform init
 terraform plan
 terraform apply
 ```
+
+If this AWS account already has the GitHub OIDC provider, import it into this stack before applying:
+
+```sh
+terraform import \
+  aws_iam_openid_connect_provider.github_actions \
+  arn:aws:iam::YOUR_AWS_ACCOUNT_ID:oidc-provider/token.actions.githubusercontent.com
+```
+
+Record the values needed by GitHub:
+
+```sh
+terraform output -raw account_id
+terraform output -raw prod_deploy_role_arn
+```
+
+The production role initially has `AdministratorAccess` because it must create and update the
+application's IAM, Lambda, API Gateway, CloudFront, S3, VPC, and RDS resources. Its trust policy is
+strictly limited to the protected GitHub environment. Replace this managed policy with a
+least-privilege deployment policy once the production resource set stabilizes.
 
 ## Configure AWS CLI Profile
 
