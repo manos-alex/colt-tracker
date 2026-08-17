@@ -6,4 +6,4 @@ database_deletion_protection      = true
 database_min_capacity             = 0
 database_max_capacity             = 1
 database_seconds_until_auto_pause = 300
-api_cors_allowed_origins          = ["https://REPLACE_WITH_PROD_FRONTEND_DOMAIN"]
+api_cors_allowed_origins          = ["https://d2xetjjktw3gp.cloudfront.net"]

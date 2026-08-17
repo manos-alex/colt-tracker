@@ -115,12 +115,27 @@ jobs:
 
       - name: Run database migrations
         run: |
-          aws lambda invoke \
-            --function-name "$(terraform -chdir=infra output -raw migration_runner_function_name)" \
-            /tmp/colt-tracker-prod-migrations.json \
-            > /tmp/colt-tracker-prod-migration-metadata.json
-          cat /tmp/colt-tracker-prod-migrations.json
-          jq -e 'has("FunctionError") | not' /tmp/colt-tracker-prod-migration-metadata.json
+          for attempt in $(seq 1 30); do
+            aws lambda invoke \
+              --function-name "$(terraform -chdir=infra output -raw migration_runner_function_name)" \
+              /tmp/colt-tracker-prod-migrations.json \
+              > /tmp/colt-tracker-prod-migration-metadata.json
+
+            if jq -e 'has("FunctionError") | not' /tmp/colt-tracker-prod-migration-metadata.json > /dev/null; then
+              cat /tmp/colt-tracker-prod-migrations.json
+              exit 0
+            fi
+
+            cat /tmp/colt-tracker-prod-migrations.json
+            if jq -e '.errorType == "DatabaseResumingException"' /tmp/colt-tracker-prod-migrations.json > /dev/null && [[ "${attempt}" -lt 30 ]]; then
+              echo "Aurora is resuming; retrying migrations in 10 seconds (attempt ${attempt}/30)."
+              sleep 10
+              continue
+            fi
+
+            cat /tmp/colt-tracker-prod-migration-metadata.json
+            exit 1
+          done
 
       - name: Publish frontend
         run: |
