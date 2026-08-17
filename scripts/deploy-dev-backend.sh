@@ -29,6 +29,6 @@ API_ENDPOINT="$(terraform -chdir="${INFRA_DIR}" output -raw api_endpoint)"
 echo "Smoke testing deployed API..."
 curl --fail --silent --show-error "${API_ENDPOINT}/api/health"
 echo
-curl --fail --silent --show-error --max-time 60 "${API_ENDPOINT}/api/bootstrap" >/dev/null
+curl --fail --silent --show-error --max-time 60 "${API_ENDPOINT}/api/session" >/dev/null
 
 echo "Dev backend deployed."

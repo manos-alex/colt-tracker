@@ -67,7 +67,7 @@ Smoke test the deployed API:
 
 ```sh
 curl "$(terraform output -raw api_endpoint)/api/health"
-curl "$(terraform output -raw api_endpoint)/api/bootstrap"
+curl "$(terraform output -raw api_endpoint)/api/session"
 ```
 
 After a frontend build, upload `../dist` to the `frontend_bucket_name` output. The CloudFront

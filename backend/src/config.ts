@@ -5,6 +5,13 @@ export type AppConfig = {
   port: number;
 };
 
+export type AuthConfig = {
+  adminPassword: string;
+  secureCookies: boolean;
+  sessionSecret: string;
+  viewerPassword: string;
+};
+
 export type DatabaseConfig = {
   clusterArn: string;
   databaseName: string;
@@ -27,6 +34,38 @@ export function getDatabaseConfig(env: NodeJS.ProcessEnv = process.env): Databas
   }
 
   return config;
+}
+
+export function getAuthConfig(env: NodeJS.ProcessEnv = process.env): AuthConfig {
+  const adminPassword = env.ADMIN_SITE_PASSWORD;
+  const viewerPassword = env.VIEWER_SITE_PASSWORD;
+  const sessionSecret = env.SESSION_SECRET;
+  const missing = [
+    ["ADMIN_SITE_PASSWORD", adminPassword],
+    ["VIEWER_SITE_PASSWORD", viewerPassword],
+    ["SESSION_SECRET", sessionSecret],
+  ]
+    .filter(([, value]) => !value)
+    .map(([name]) => name);
+
+  if (missing.length > 0) {
+    throw new Error(`Missing required authentication environment variables: ${missing.join(", ")}`);
+  }
+
+  if (adminPassword === viewerPassword) {
+    throw new Error("ADMIN_SITE_PASSWORD and VIEWER_SITE_PASSWORD must be different.");
+  }
+
+  if ((sessionSecret as string).length < 32) {
+    throw new Error("SESSION_SECRET must be at least 32 characters.");
+  }
+
+  return {
+    adminPassword: adminPassword as string,
+    secureCookies: (env.ENVIRONMENT ?? "local") !== "local",
+    sessionSecret: sessionSecret as string,
+    viewerPassword: viewerPassword as string,
+  };
 }
 
 function getOptionalDatabaseConfig(env: NodeJS.ProcessEnv): DatabaseConfig | undefined {

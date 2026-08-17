@@ -1,5 +1,13 @@
-import { executeSql, sqlParam } from "../db/dataApi.js";
-import { badRequest, jsonResponse, methodNotAllowed, type ApiRequest, type ApiResponse } from "../http.js";
+import { executeSql, sqlParam, withTransaction } from "../db/dataApi.js";
+import { mapTournament } from "../db/mappers.js";
+import {
+  badRequest,
+  jsonResponse,
+  methodNotAllowed,
+  resourceNotFound,
+  type ApiRequest,
+  type ApiResponse,
+} from "../http.js";
 import {
   isObject,
   mutateAndReturnData,
@@ -8,9 +16,14 @@ import {
   parseString,
   parseUuid,
 } from "./shared.js";
+import { getTournamentData, getTournamentListData } from "./routeData.js";
 
 export async function handleTournamentsRequest(request: ApiRequest): Promise<ApiResponse> {
   if (request.path === "/api/tournaments") {
+    if (request.method === "GET") {
+      return jsonResponse(200, await getTournamentListData());
+    }
+
     if (request.method === "POST") {
       return createTournament(request.body);
     }
@@ -25,6 +38,11 @@ export async function handleTournamentsRequest(request: ApiRequest): Promise<Api
 
   const tournamentId = parseUuid(tournamentRoute.tournamentId, "tournamentId");
   if ("error" in tournamentId) return badRequest(tournamentId.error);
+
+  if (request.method === "GET" && tournamentRoute.rest === "") {
+    const data = await getTournamentData(tournamentId.value);
+    return data.tournaments[0] ? jsonResponse(200, data) : resourceNotFound("Tournament");
+  }
 
   if (request.method === "DELETE" && tournamentRoute.rest === "") {
     return removeTournament(tournamentId.value);
@@ -76,28 +94,20 @@ async function createTournament(body: unknown): Promise<ApiResponse> {
 
   const location = parseOptionalString(body.location);
 
-  const result = await mutateAndReturnData(async (transactionId) => {
-    await executeSql(
-      `
-        insert into tournaments (name, location)
-        values (:name, :location)
-      `,
-      [sqlParam("name", name.value), sqlParam("location", location)],
-      transactionId,
-    );
-  });
+  const result = await executeSql(
+    `
+      insert into tournaments (name, location)
+      values (:name, :location)
+      returning *
+    `,
+    [sqlParam("name", name.value), sqlParam("location", location)],
+  );
 
-  const tournament = [...result.data.tournaments]
-    .reverse()
-    .find((item) => item.name === name.value && item.location === location);
-
-  return jsonResponse(201, { ...result, tournamentId: tournament?.id ?? null });
+  return jsonResponse(201, { tournament: mapTournament(result.rows[0]) });
 }
 
 async function removeTournament(tournamentId: string): Promise<ApiResponse> {
-  return jsonResponse(
-    200,
-    await mutateAndReturnData(async (transactionId) => {
+  await withTransaction(async (transactionId) => {
       const games = await executeSql(
         "select id from games where tournament_id = cast(:tournamentId as uuid)",
         [sqlParam("tournamentId", tournamentId)],
@@ -124,8 +134,9 @@ async function removeTournament(tournamentId: string): Promise<ApiResponse> {
         [sqlParam("tournamentId", tournamentId)],
         transactionId,
       );
-    }),
-  );
+  });
+
+  return jsonResponse(200, { deletedTournamentId: tournamentId });
 }
 
 async function toggleTournamentPlayer(tournamentId: string, body: unknown): Promise<ApiResponse> {
@@ -136,7 +147,7 @@ async function toggleTournamentPlayer(tournamentId: string, body: unknown): Prom
 
   return jsonResponse(
     200,
-    await mutateAndReturnData(async (transactionId) => {
+    await mutateTournamentData(tournamentId, async (transactionId) => {
       const existing = await executeSql(
         `
           select id
@@ -174,7 +185,7 @@ async function toggleTournamentPlayer(tournamentId: string, body: unknown): Prom
 async function selectRosteredTournamentPlayers(tournamentId: string): Promise<ApiResponse> {
   return jsonResponse(
     200,
-    await mutateAndReturnData(async (transactionId) => {
+    await mutateTournamentData(tournamentId, async (transactionId) => {
       await executeSql(
         "delete from tournament_players where tournament_id = cast(:tournamentId as uuid)",
         [sqlParam("tournamentId", tournamentId)],
@@ -207,7 +218,7 @@ async function createGame(tournamentId: string, body: unknown): Promise<ApiRespo
   const videoUrl = parseOptionalString(body.videoUrl);
   let gameId: string | null = null;
 
-  const result = await mutateAndReturnData(async (transactionId) => {
+  const result = await mutateTournamentData(tournamentId, async (transactionId) => {
     const sortOrder = await nextSortOrder(tournamentId, dayNumber.value, transactionId);
     const game = await executeSql(
       `
@@ -256,7 +267,7 @@ async function createBye(tournamentId: string, body: unknown): Promise<ApiRespon
 
   return jsonResponse(
     201,
-    await mutateAndReturnData(async (transactionId) => {
+    await mutateTournamentData(tournamentId, async (transactionId) => {
       const sortOrder = await nextSortOrder(tournamentId, dayNumber.value, transactionId);
       await executeSql(
         `
@@ -282,7 +293,7 @@ async function updateDayCount(tournamentId: string, body: unknown): Promise<ApiR
 
   return jsonResponse(
     200,
-    await mutateAndReturnData(async (transactionId) => {
+    await mutateTournamentData(tournamentId, async (transactionId) => {
       await executeSql(
         "update tournaments set day_count = :dayCount where id = cast(:tournamentId as uuid)",
         [sqlParam("dayCount", dayCount.value), sqlParam("tournamentId", tournamentId)],
@@ -305,7 +316,7 @@ async function moveScheduleItem(tournamentId: string, scheduleItemId: string, bo
 
   return jsonResponse(
     200,
-    await mutateAndReturnData(async (transactionId) => {
+    await mutateTournamentData(tournamentId, async (transactionId) => {
       const items = await executeSql(
         `
           select *
@@ -378,7 +389,7 @@ async function removeScheduleItem(tournamentId: string, scheduleItemId: string):
 
   return jsonResponse(
     200,
-    await mutateAndReturnData(async (transactionId) => {
+    await mutateTournamentData(tournamentId, async (transactionId) => {
       const scheduleItem = await executeSql(
         `
           select *
@@ -413,7 +424,7 @@ async function removeDay(tournamentId: string, dayNumber: number): Promise<ApiRe
 
   return jsonResponse(
     200,
-    await mutateAndReturnData(async (transactionId) => {
+    await mutateTournamentData(tournamentId, async (transactionId) => {
       const dayItems = await executeSql(
         `
           select id
@@ -502,6 +513,13 @@ function parseTournamentRoute(path: string) {
     tournamentId: decodeURIComponent(match[1] ?? ""),
     rest: match[2] ?? "",
   };
+}
+
+function mutateTournamentData(
+  tournamentId: string,
+  mutation: (transactionId: string) => Promise<void>,
+) {
+  return mutateAndReturnData(mutation, () => getTournamentData(tournamentId));
 }
 
 function parsePositiveInteger(value: unknown, label: string) {

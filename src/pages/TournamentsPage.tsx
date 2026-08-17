@@ -1,17 +1,74 @@
 import { Dispatch, FormEvent, SetStateAction, useState } from "react";
+import DeleteConfirmationModal from "../components/DeleteConfirmationModal";
 import { createTournament, deleteTournament } from "../lib/api";
 import { paths } from "../lib/routes";
-import type { AppData, Tournament } from "../types";
+import type { AppData, Id, Tournament } from "../types";
 
 type DataSetter = Dispatch<SetStateAction<AppData>>;
+const stateAbbreviations = [
+  "AL",
+  "AK",
+  "AZ",
+  "AR",
+  "CA",
+  "CO",
+  "CT",
+  "DE",
+  "FL",
+  "GA",
+  "HI",
+  "ID",
+  "IL",
+  "IN",
+  "IA",
+  "KS",
+  "KY",
+  "LA",
+  "ME",
+  "MD",
+  "MA",
+  "MI",
+  "MN",
+  "MS",
+  "MO",
+  "MT",
+  "NE",
+  "NV",
+  "NH",
+  "NJ",
+  "NM",
+  "NY",
+  "NC",
+  "ND",
+  "OH",
+  "OK",
+  "OR",
+  "PA",
+  "RI",
+  "SC",
+  "SD",
+  "TN",
+  "TX",
+  "UT",
+  "VT",
+  "VA",
+  "WA",
+  "WV",
+  "WI",
+  "WY",
+];
 
 function TournamentsPage({
   data,
+  gameCounts,
   setData,
+  setGameCounts,
   navigate,
 }: {
   data: AppData;
+  gameCounts: Record<Id, number>;
   setData: DataSetter;
+  setGameCounts: Dispatch<SetStateAction<Record<Id, number>>>;
   navigate: (path: string) => void;
 }) {
   const [name, setName] = useState("");
@@ -19,6 +76,7 @@ function TournamentsPage({
   const [isAddingTournament, setIsAddingTournament] = useState(false);
   const [isEditingTournaments, setIsEditingTournaments] = useState(false);
   const [isSavingTournament, setIsSavingTournament] = useState(false);
+  const [tournamentPendingDelete, setTournamentPendingDelete] = useState<Tournament | null>(null);
   const [deletingTournamentId, setDeletingTournamentId] = useState("");
   const [error, setError] = useState("");
 
@@ -32,15 +90,16 @@ function TournamentsPage({
 
     try {
       const result = await createTournament({ name: trimmedName, location: location.trim() });
-      setData(result.data);
+      setData((current) => ({
+        ...current,
+        tournaments: [...current.tournaments, result.tournament],
+      }));
+      setGameCounts((current) => ({ ...current, [result.tournament.id]: 0 }));
       setName("");
       setLocation("");
       setIsAddingTournament(false);
 
-      const tournament = result.data.tournaments.find((item) => item.id === result.tournamentId);
-      if (tournament) {
-        navigate(paths.tournament(tournament));
-      }
+      navigate(paths.tournament(result.tournament));
     } catch (apiError) {
       setError(apiError instanceof Error ? apiError.message : "Unable to add tournament.");
     } finally {
@@ -61,8 +120,14 @@ function TournamentsPage({
     setError("");
 
     try {
-      const result = await deleteTournament(tournament.id);
-      setData(result.data);
+      await deleteTournament(tournament.id);
+      setData((current) => removeTournamentFromData(current, tournament.id));
+      setGameCounts((current) => {
+        const next = { ...current };
+        delete next[tournament.id];
+        return next;
+      });
+      setTournamentPendingDelete(null);
     } catch (apiError) {
       setError(apiError instanceof Error ? apiError.message : "Unable to remove tournament.");
     } finally {
@@ -102,11 +167,18 @@ function TournamentsPage({
               onChange={(event) => setName(event.target.value)}
               placeholder="Name"
             />
-            <input
+            <select
               value={location}
               onChange={(event) => setLocation(event.target.value)}
-              placeholder="Location"
-            />
+              aria-label="Location"
+            >
+              <option value="">Location</option>
+              {stateAbbreviations.map((state) => (
+                <option key={state} value={state}>
+                  {state}
+                </option>
+              ))}
+            </select>
             <button type="submit" disabled={isSavingTournament}>
               {isSavingTournament ? "Saving" : "Save"}
             </button>
@@ -122,9 +194,7 @@ function TournamentsPage({
             </div>
             <div className="selection-list">
               {data.tournaments.map((tournament) => {
-                const gameCount = data.games.filter(
-                  (game) => game.tournamentId === tournament.id,
-                ).length;
+                const gameCount = gameCounts[tournament.id] ?? 0;
 
                 return (
                   <div
@@ -158,7 +228,7 @@ function TournamentsPage({
                         disabled={deletingTournamentId === tournament.id}
                         onClick={(event) => {
                           event.stopPropagation();
-                          void removeTournament(tournament);
+                          setTournamentPendingDelete(tournament);
                         }}
                       >
                         {deletingTournamentId === tournament.id ? "Removing" : "Remove"}
@@ -171,8 +241,38 @@ function TournamentsPage({
           </>
         )}
       </section>
+      {tournamentPendingDelete && (
+        <DeleteConfirmationModal
+          itemName={tournamentPendingDelete.name}
+          isConfirming={deletingTournamentId === tournamentPendingDelete.id}
+          onCancel={() => setTournamentPendingDelete(null)}
+          onConfirm={() => void removeTournament(tournamentPendingDelete)}
+        />
+      )}
     </section>
   );
 }
 
 export default TournamentsPage;
+
+function removeTournamentFromData(data: AppData, tournamentId: Id): AppData {
+  const gameIds = new Set(
+    data.games.filter((game) => game.tournamentId === tournamentId).map((game) => game.id),
+  );
+  const pointIds = new Set(
+    data.points.filter((point) => gameIds.has(point.gameId)).map((point) => point.id),
+  );
+
+  return {
+    players: data.players,
+    tournaments: data.tournaments.filter((item) => item.id !== tournamentId),
+    tournamentPlayers: data.tournamentPlayers.filter((item) => item.tournamentId !== tournamentId),
+    tournamentScheduleItems: data.tournamentScheduleItems.filter(
+      (item) => item.tournamentId !== tournamentId,
+    ),
+    games: data.games.filter((game) => !gameIds.has(game.id)),
+    points: data.points.filter((point) => !gameIds.has(point.gameId)),
+    pointPlayers: data.pointPlayers.filter((item) => !pointIds.has(item.pointId)),
+    events: data.events.filter((event) => !gameIds.has(event.gameId)),
+  };
+}

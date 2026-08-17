@@ -11,3 +11,4 @@ infra/.terraform-build/
 infra/backend/dev.hcl
 infra/backend/prod.hcl
 infra/iam-bootstrap/terraform.tfvars
+infra/*.auto.tfvars

@@ -22,7 +22,11 @@ The current deployment path is:
 - RDS Data API for Lambda and local backend database access.
 - Secrets Manager for generated database credentials.
 - Terraform-managed AWS infrastructure.
-- Auth/whitelist after the core charting workflow and data model stabilize.
+- Signed 24-hour password sessions with viewer and admin roles.
+
+The frontend checks session state before requesting application data. Viewer sessions are limited to
+aggregate statistics endpoints. Admin pages load and cache route-scoped payloads for roster,
+tournament, and game workflows instead of loading the complete database at startup.
 
 The browser never connects directly to PostgreSQL. React calls API Gateway in deployed
 environments, and calls the local backend through Vite's `/api` proxy during local development.

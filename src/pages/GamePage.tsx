@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { mergeGameData } from "../data";
 import type {
   AppData,
   EndzoneSide,
@@ -30,6 +31,7 @@ import {
   recordGameEvent,
   startGamePoint,
 } from "../lib/api";
+import { paths } from "../lib/routes";
 import { formatTimestamp, getYouTubeVideoId } from "../youtube";
 
 type DataSetter = Dispatch<SetStateAction<AppData>>;
@@ -187,13 +189,23 @@ function GamePage({
   game,
   activePoint,
   setData,
+  navigate,
 }: {
   data: AppData;
   game: Game;
   activePoint: Point | undefined;
   setData: DataSetter;
+  navigate: (path: string) => void;
 }) {
-  return <ChartingWorkspace data={data} game={game} activePoint={activePoint} setData={setData} />;
+  return (
+    <ChartingWorkspace
+      data={data}
+      game={game}
+      activePoint={activePoint}
+      setData={setData}
+      navigate={navigate}
+    />
+  );
 }
 
 function ChartingWorkspace({
@@ -201,11 +213,13 @@ function ChartingWorkspace({
   game,
   activePoint,
   setData,
+  navigate,
 }: {
   data: AppData;
   game: Game;
   activePoint: Point | undefined;
   setData: DataSetter;
+  navigate: (path: string) => void;
 }) {
   const playerRef = useRef<YouTubePlayer | null>(null);
   const [error, setError] = useState("");
@@ -216,6 +230,7 @@ function ChartingWorkspace({
   );
   const availablePlayers = data.players.filter((player) => tournamentPlayerIds.has(player.id));
   const gameEvents = data.events.filter((event) => event.gameId === game.id);
+  const tournament = data.tournaments.find((item) => item.id === game.tournamentId);
   const pointEvents = activePoint
     ? gameEvents.filter((event) => event.pointId === activePoint.id)
     : [];
@@ -238,7 +253,7 @@ function ChartingWorkspace({
 
     try {
       const result = await mutation();
-      setData(result.data);
+      setData((current) => mergeGameData(current, result.data, game.id));
       return true;
     } catch (apiError) {
       setError(apiError instanceof Error ? apiError.message : "Unable to save game data.");
@@ -378,8 +393,17 @@ function ChartingWorkspace({
     void updateGame({ gameFinished: false });
   };
 
+  const navigateBackToTournament = () => {
+    navigate(tournament ? paths.tournament(tournament) : paths.tournaments);
+  };
+
   return (
     <section className="charting">
+      <div className="charting-heading">
+        <button className="compact-button" onClick={navigateBackToTournament}>
+          Back
+        </button>
+      </div>
       {error && <p className="status-banner error">{error}</p>}
       <ScoreBar
         game={game}
