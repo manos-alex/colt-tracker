@@ -1,5 +1,5 @@
 environment                       = "prod"
-api_lambda_reserved_concurrency   = 20
+api_lambda_reserved_concurrency   = null
 api_throttling_burst_limit        = 100
 api_throttling_rate_limit         = 50
 database_deletion_protection      = true
