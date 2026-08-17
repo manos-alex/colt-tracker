@@ -1,9 +1,18 @@
 import { getConfig } from "./config.js";
-import { getBootstrapData } from "./routes/bootstrap.js";
+import { readSession } from "./auth.js";
 import { handleGamesRequest } from "./routes/games.js";
 import { handlePlayersRequest } from "./routes/players.js";
+import { handleSessionRequest } from "./routes/session.js";
 import { handleTournamentsRequest } from "./routes/tournaments.js";
-import { jsonResponse, methodNotAllowed, notFound, type ApiRequest, type ApiResponse } from "./http.js";
+import {
+  forbidden,
+  jsonResponse,
+  methodNotAllowed,
+  notFound,
+  unauthorized,
+  type ApiRequest,
+  type ApiResponse,
+} from "./http.js";
 
 export async function handleRequest(request: ApiRequest): Promise<ApiResponse> {
   try {
@@ -34,13 +43,14 @@ async function routeRequest(request: ApiRequest): Promise<ApiResponse> {
     });
   }
 
-  if (path === "/api/bootstrap") {
-    if (request.method !== "GET") {
-      return methodNotAllowed(request.method);
-    }
-
-    return jsonResponse(200, await getBootstrapData());
+  if (path === "/api/session") {
+    return handleSessionRequest({ ...request, path });
   }
+
+  const session = readSession(request);
+  if (!session) return unauthorized();
+  const isStatsRoute = path === "/api/stats" || path.startsWith("/api/stats/");
+  if (session.role === "viewer" && !isStatsRoute) return forbidden();
 
   if (path === "/api/players" || path.startsWith("/api/players/")) {
     return handlePlayersRequest({ ...request, path });

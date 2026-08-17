@@ -1,4 +1,5 @@
 export type Id = string;
+export type AuthRole = "admin" | "viewer";
 
 export type Possession = "us" | "opponent";
 export type ScoringTeam = Possession;
@@ -140,4 +141,9 @@ export type AppData = {
   points: Point[];
   pointPlayers: PointPlayer[];
   events: Event[];
+};
+
+export type TournamentListData = {
+  gameCounts: Record<Id, number>;
+  tournaments: Tournament[];
 };

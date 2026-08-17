@@ -53,6 +53,29 @@ variable "api_throttling_rate_limit" {
   default     = 5
 }
 
+variable "admin_site_password" {
+  description = "Password that grants full administrative access to the application."
+  type        = string
+  sensitive   = true
+}
+
+variable "viewer_site_password" {
+  description = "Password that grants statistics-only access to the application."
+  type        = string
+  sensitive   = true
+}
+
+variable "session_secret" {
+  description = "Random secret used to sign application session cookies. Must contain at least 32 characters."
+  type        = string
+  sensitive   = true
+
+  validation {
+    condition     = length(var.session_secret) >= 32
+    error_message = "session_secret must contain at least 32 characters."
+  }
+}
+
 variable "database_name" {
   description = "Initial PostgreSQL database name."
   type        = string

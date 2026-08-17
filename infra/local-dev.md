@@ -18,6 +18,9 @@ DB_SECRET_ARN=...
 DB_NAME=colttracker
 ENVIRONMENT=local
 PORT=8787
+ADMIN_SITE_PASSWORD=...
+VIEWER_SITE_PASSWORD=...
+SESSION_SECRET=...
 ```
 
 Get the database values from Terraform outputs:
@@ -49,14 +52,14 @@ Smoke test the local backend directly:
 
 ```sh
 curl http://localhost:8787/api/health
-curl http://localhost:8787/api/bootstrap
+curl http://localhost:8787/api/session
 ```
 
 Smoke test through Vite's proxy:
 
 ```sh
 curl http://localhost:5173/api/health
-curl http://localhost:5173/api/bootstrap
+curl http://localhost:5173/api/session
 ```
 
 ## API Shape
@@ -64,14 +67,14 @@ curl http://localhost:5173/api/bootstrap
 The local and deployed backend expose the same routes:
 
 - `GET /api/health`
-- `GET /api/bootstrap`
+- `/api/session`
 - `/api/players`
 - `/api/tournaments`
 - `/api/games`
 
-`GET /api/bootstrap` returns the full frontend `AppData` shape from Aurora. Most mutation routes
-return a refreshed `AppData` payload so the frontend can replace local React state with the server
-state after each write.
+After authentication, admin pages load only the data needed by the current route. The browser caches
+each route payload for the current tab session, and mutation routes return a refreshed payload for
+only the affected tournament or game.
 
 ## Tradeoff
 

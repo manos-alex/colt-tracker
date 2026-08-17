@@ -1,7 +1,14 @@
 import type { AppData, Event, FieldCoordinate, Game, Id, Point, Possession } from "../../../src/types.js";
 import { executeSql, sqlParam } from "../db/dataApi.js";
-import { badRequest, jsonResponse, methodNotAllowed, type ApiRequest, type ApiResponse } from "../http.js";
-import { getBootstrapData } from "./bootstrap.js";
+import {
+  badRequest,
+  jsonResponse,
+  methodNotAllowed,
+  resourceNotFound,
+  type ApiRequest,
+  type ApiResponse,
+} from "../http.js";
+import { getGameData } from "./routeData.js";
 import {
   insertEvent,
   isObject,
@@ -34,6 +41,11 @@ export async function handleGamesRequest(request: ApiRequest): Promise<ApiRespon
 
   const gameId = parseUuid(route.gameId, "gameId");
   if ("error" in gameId) return badRequest(gameId.error);
+
+  if (request.method === "GET" && route.rest === "") {
+    const data = await getGameData(gameId.value);
+    return data.games[0] ? jsonResponse(200, data) : resourceNotFound("Game");
+  }
 
   if (request.method === "PATCH" && route.rest === "") {
     return patchGame(gameId.value, request.body);
@@ -73,7 +85,7 @@ async function patchGame(gameId: Id, body: unknown): Promise<ApiResponse> {
 
   return jsonResponse(
     200,
-    await mutateAndReturnData(async (transactionId) => {
+    await mutateGameData(gameId, async (transactionId) => {
       await updateGamePatch(gameId, patch.value, transactionId);
     }),
   );
@@ -130,9 +142,18 @@ async function startPoint(gameId: Id, body: unknown): Promise<ApiResponse> {
     };
   }
 
+  const pointStartEventVideoSeconds =
+    startedOnOffense.value && initialThrowerId.value
+      ? initialCatchVideoSeconds.value
+      : pullDetails?.releaseVideoSeconds ?? null;
+  if (pointStartEventVideoSeconds !== null) {
+    const timelineError = await validateEventTimestamp(gameId, pointStartEventVideoSeconds);
+    if (timelineError) return timelineError;
+  }
+
   return jsonResponse(
     200,
-    await mutateAndReturnData(async (transactionId) => {
+    await mutateGameData(gameId, async (transactionId) => {
       const game = await requireGame(gameId, transactionId);
       const pointNumber = Number(game.our_score) + Number(game.opponent_score) + 1;
       const point = await executeSql(
@@ -243,9 +264,12 @@ async function recordEvent(gameId: Id, body: unknown): Promise<ApiResponse> {
   const subPlayerId = parseOptionalUuid(body.subPlayerId, "subPlayerId");
   if ("error" in subPlayerId) return badRequest(subPlayerId.error);
 
+  const timelineError = await validateEventTimestamp(gameId, parsed.value.videoSeconds);
+  if (timelineError) return timelineError;
+
   return jsonResponse(
     200,
-    await mutateAndReturnData(async (transactionId) => {
+    await mutateGameData(gameId, async (transactionId) => {
       const game = await requireGame(gameId, transactionId);
       const activePoint = await getActivePoint(gameId, transactionId);
 
@@ -290,9 +314,14 @@ async function finishPoint(gameId: Id, body: unknown): Promise<ApiResponse> {
     body.eventType === undefined || body.eventType === null ? null : parseEventBody(body);
   if (eventInput && "error" in eventInput) return badRequest(eventInput.error);
 
+  if (eventInput) {
+    const timelineError = await validateEventTimestamp(gameId, eventInput.value.videoSeconds);
+    if (timelineError) return timelineError;
+  }
+
   return jsonResponse(
     200,
-    await mutateAndReturnData(async (transactionId) => {
+    await mutateGameData(gameId, async (transactionId) => {
       const game = await requireGame(gameId, transactionId);
       const activePoint = await getActivePoint(gameId, transactionId);
       if (!activePoint?.id) return;
@@ -347,8 +376,33 @@ async function finishPoint(gameId: Id, body: unknown): Promise<ApiResponse> {
   );
 }
 
+async function validateEventTimestamp(
+  gameId: Id,
+  eventVideoSeconds: number,
+): Promise<ApiResponse | null> {
+  const latestEvent = await executeSql<{ video_seconds: number }>(
+    `
+      select video_seconds
+      from events
+      where game_id = cast(:gameId as uuid)
+      order by video_seconds desc, created_at desc
+      limit 1
+    `,
+    [sqlParam("gameId", gameId)],
+  );
+  const latestVideoSeconds = Number(latestEvent.rows[0]?.video_seconds);
+
+  if (!Number.isFinite(latestVideoSeconds) || eventVideoSeconds >= latestVideoSeconds) {
+    return null;
+  }
+
+  return badRequest(
+    `Event timestamp cannot be earlier than the latest event timestamp (${latestVideoSeconds} seconds).`,
+  );
+}
+
 async function deleteActivePointStart(gameId: Id): Promise<ApiResponse> {
-  const data = await getBootstrapData();
+  const data = await getGameData(gameId);
   const activePoint = data.points.find((point) => point.gameId === gameId && point.status === "active");
   if (!activePoint) {
     return jsonResponse(200, { data });
@@ -365,7 +419,7 @@ async function deleteActivePointStart(gameId: Id): Promise<ApiResponse> {
 
   return jsonResponse(
     200,
-    await mutateAndReturnData(async (transactionId) => {
+    await mutateGameData(gameId, async (transactionId) => {
       const currentActivePoint = await getActivePoint(gameId, transactionId);
       if (!currentActivePoint?.id) return;
 
@@ -421,8 +475,8 @@ async function deleteEvent(gameId: Id, eventId: string): Promise<ApiResponse> {
 
   return jsonResponse(
     200,
-    await mutateAndReturnData(async (transactionId) => {
-      const data = await getBootstrapData();
+    await mutateGameData(gameId, async (transactionId) => {
+      const data = await getGameData(gameId);
       const targetEvent = data.events.find((event) => event.id === parsedEventId.value && event.gameId === gameId);
       const currentGame = data.games.find((game) => game.id === gameId);
       if (!targetEvent || !currentGame) return;
@@ -778,6 +832,13 @@ function parseGameRoute(path: string) {
     gameId: decodeURIComponent(match[1] ?? ""),
     rest: match[2] ?? "",
   };
+}
+
+function mutateGameData(
+  gameId: Id,
+  mutation: (transactionId: string) => Promise<void>,
+) {
+  return mutateAndReturnData(mutation, () => getGameData(gameId));
 }
 
 function parsePayload(value: unknown): Record<string, unknown> {

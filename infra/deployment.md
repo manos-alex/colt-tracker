@@ -121,7 +121,7 @@ Smoke test API Gateway after apply and migrations:
 
 ```sh
 curl "$(terraform -chdir=infra output -raw api_endpoint)/api/health"
-curl "$(terraform -chdir=infra output -raw api_endpoint)/api/bootstrap"
+curl "$(terraform -chdir=infra output -raw api_endpoint)/api/session"
 ```
 
 Aurora Serverless dev is allowed to auto-pause. The first database-backed request after idle time can
@@ -150,15 +150,17 @@ Production should use the same Terraform code but initialize with `backend/prod.
 5. Wait for manual approval.
 6. Apply the reviewed plan.
 7. Invoke the migration runner.
-8. Smoke test API health and bootstrap.
+8. Smoke test API health and session handling.
 9. Upload frontend assets and invalidate the prod CloudFront distribution.
+
+The implemented GitHub Actions and AWS OIDC setup is documented in [prod-cicd.md](prod-cicd.md).
 
 ## Backend Routes
 
 The deployed API Lambda and local backend share the same route handler:
 
 - `GET /api/health`
-- `GET /api/bootstrap`
+- `/api/session`
 - `/api/players`
 - `/api/tournaments`
 - `/api/games`

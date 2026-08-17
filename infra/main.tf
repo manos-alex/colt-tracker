@@ -321,11 +321,14 @@ resource "aws_lambda_function" "api" {
 
   environment {
     variables = {
-      DB_CLUSTER_ARN = aws_rds_cluster.database.arn
-      DB_NAME        = var.database_name
-      DB_SECRET_ARN  = aws_rds_cluster.database.master_user_secret[0].secret_arn
-      ENVIRONMENT    = var.environment
-      PROJECT_NAME   = var.project_name
+      DB_CLUSTER_ARN       = aws_rds_cluster.database.arn
+      DB_NAME              = var.database_name
+      DB_SECRET_ARN        = aws_rds_cluster.database.master_user_secret[0].secret_arn
+      ENVIRONMENT          = var.environment
+      PROJECT_NAME         = var.project_name
+      ADMIN_SITE_PASSWORD  = var.admin_site_password
+      VIEWER_SITE_PASSWORD = var.viewer_site_password
+      SESSION_SECRET       = var.session_secret
     }
   }
 

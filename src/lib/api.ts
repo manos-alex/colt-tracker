@@ -1,4 +1,15 @@
-import type { AppData, EventType, FieldCoordinate, Game, Id, Player, Possession } from "../types";
+import type {
+  AppData,
+  AuthRole,
+  EventType,
+  FieldCoordinate,
+  Game,
+  Id,
+  Player,
+  Possession,
+  Tournament,
+  TournamentListData,
+} from "../types";
 
 type CreatePlayerInput = {
   name: string;
@@ -7,8 +18,40 @@ type CreatePlayerInput = {
 
 type UpdatePlayerInput = Partial<Pick<Player, "name" | "rosterPlayer">>;
 
-export async function fetchBootstrapData(): Promise<AppData> {
-  return apiRequest<AppData>("/api/bootstrap");
+export type SessionStatus =
+  | { authenticated: false }
+  | { authenticated: true; expiresAt: number; role: AuthRole };
+
+export async function fetchSession(): Promise<SessionStatus> {
+  return apiRequest("/api/session");
+}
+
+export async function createSession(password: string): Promise<SessionStatus> {
+  return apiRequest("/api/session", {
+    method: "POST",
+    body: JSON.stringify({ password }),
+  });
+}
+
+export async function deleteSession(): Promise<void> {
+  await apiRequest<SessionStatus>("/api/session", { method: "DELETE" });
+}
+
+export async function fetchPlayers(): Promise<Player[]> {
+  const response = await apiRequest<{ players: Player[] }>("/api/players");
+  return response.players;
+}
+
+export async function fetchTournamentList(): Promise<TournamentListData> {
+  return apiRequest("/api/tournaments");
+}
+
+export async function fetchTournamentData(tournamentId: Id): Promise<AppData> {
+  return apiRequest(`/api/tournaments/${encodeURIComponent(tournamentId)}`);
+}
+
+export async function fetchGameData(gameId: Id): Promise<AppData> {
+  return apiRequest(`/api/games/${encodeURIComponent(gameId)}`);
 }
 
 export async function createPlayer(input: CreatePlayerInput): Promise<Player> {
@@ -41,14 +84,14 @@ export async function deletePlayer(playerId: Id): Promise<void> {
 export async function createTournament(input: {
   name: string;
   location: string;
-}): Promise<{ data: AppData; tournamentId: Id | null }> {
+}): Promise<{ tournament: Tournament }> {
   return apiRequest("/api/tournaments", {
     method: "POST",
     body: JSON.stringify(input),
   });
 }
 
-export async function deleteTournament(tournamentId: Id): Promise<{ data: AppData }> {
+export async function deleteTournament(tournamentId: Id): Promise<{ deletedTournamentId: Id }> {
   return apiRequest(`/api/tournaments/${encodeURIComponent(tournamentId)}`, {
     method: "DELETE",
   });
@@ -216,6 +259,7 @@ export async function deleteActiveGamePoint(gameId: Id): Promise<{ data: AppData
 async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(path, {
     ...init,
+    credentials: "same-origin",
     headers: {
       ...(init.body ? { "content-type": "application/json" } : {}),
       ...init.headers,
@@ -223,6 +267,9 @@ async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
   });
 
   if (!response.ok) {
+    if (response.status === 401 && path !== "/api/session") {
+      window.dispatchEvent(new Event("colt-tracker-session-expired"));
+    }
     throw new Error(await responseErrorMessage(response));
   }
 

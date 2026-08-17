@@ -1,4 +1,6 @@
 import { Dispatch, FormEvent, Fragment, SetStateAction, useState } from "react";
+import DeleteConfirmationModal from "../components/DeleteConfirmationModal";
+import { mergeTournamentData } from "../data";
 import {
   createTournamentBye,
   createTournamentGame,
@@ -17,6 +19,17 @@ type ScheduleDropTarget = {
   dayNumber: number;
   index: number;
 };
+type ScheduleDeleteTarget =
+  | {
+      type: "schedule-item";
+      item: TournamentScheduleItem;
+      label: string;
+    }
+  | {
+      type: "day";
+      dayNumber: number;
+      label: string;
+    };
 
 function TournamentPage({
   data,
@@ -36,8 +49,8 @@ function TournamentPage({
           <p className="eyebrow">Tournament</p>
           <h1>{tournament.name}</h1>
         </div>
-        <button className="ghost-button" onClick={() => navigate(paths.tournaments)}>
-          All Tournaments
+        <button className="compact-button" onClick={() => navigate(paths.tournaments)}>
+          Back
         </button>
       </div>
 
@@ -74,7 +87,7 @@ function TournamentRosterPanel({
     setError("");
     try {
       const result = await toggleApiTournamentPlayer(tournament.id, playerId);
-      setData(result.data);
+      setData((current) => mergeTournamentData(current, result.data, tournament.id));
     } catch (apiError) {
       setError(apiError instanceof Error ? apiError.message : "Unable to update tournament roster.");
     }
@@ -84,7 +97,7 @@ function TournamentRosterPanel({
     setError("");
     try {
       const result = await selectRosteredTournamentPlayers(tournament.id);
-      setData(result.data);
+      setData((current) => mergeTournamentData(current, result.data, tournament.id));
     } catch (apiError) {
       setError(apiError instanceof Error ? apiError.message : "Unable to select rostered players.");
     }
@@ -139,6 +152,9 @@ function TournamentGamesPanel({
   const [draggedItemId, setDraggedItemId] = useState<Id | null>(null);
   const [dropTarget, setDropTarget] = useState<ScheduleDropTarget | null>(null);
   const [isEditingSchedule, setIsEditingSchedule] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<ScheduleDeleteTarget | null>(null);
+  const [deletingScheduleItemId, setDeletingScheduleItemId] = useState<Id | null>(null);
+  const [deletingDayNumber, setDeletingDayNumber] = useState<number | null>(null);
   const [error, setError] = useState("");
 
   const scheduleItems = data.tournamentScheduleItems
@@ -159,7 +175,7 @@ function TournamentGamesPanel({
         videoUrl: videoUrl.trim(),
         dayNumber: addingGameDay,
       });
-      setData(result.data);
+      setData((current) => mergeTournamentData(current, result.data, tournament.id));
       setOpponentName("");
       setVideoUrl("");
       setAddingGameDay(null);
@@ -181,7 +197,7 @@ function TournamentGamesPanel({
     setError("");
     try {
       const result = await createTournamentBye(tournament.id, dayNumber);
-      setData(result.data);
+      setData((current) => mergeTournamentData(current, result.data, tournament.id));
     } catch (apiError) {
       setError(apiError instanceof Error ? apiError.message : "Unable to add bye.");
     }
@@ -191,7 +207,7 @@ function TournamentGamesPanel({
     setError("");
     try {
       const result = await updateTournamentDayCount(tournament.id, dayCount + 1);
-      setData(result.data);
+      setData((current) => mergeTournamentData(current, result.data, tournament.id));
     } catch (apiError) {
       setError(apiError instanceof Error ? apiError.message : "Unable to add day.");
     }
@@ -206,7 +222,7 @@ function TournamentGamesPanel({
         targetDay,
         targetIndex,
       });
-      setData(result.data);
+      setData((current) => mergeTournamentData(current, result.data, tournament.id));
     } catch (apiError) {
       setError(apiError instanceof Error ? apiError.message : "Unable to move schedule item.");
     }
@@ -262,26 +278,58 @@ function TournamentGamesPanel({
   };
 
   const removeScheduleItem = async (scheduleItem: TournamentScheduleItem) => {
+    if (deletingScheduleItemId) return;
+
+    setDeletingScheduleItemId(scheduleItem.id);
     setError("");
     try {
       const result = await deleteTournamentScheduleItem(tournament.id, scheduleItem.id);
-      setData(result.data);
+      setData((current) => mergeTournamentData(current, result.data, tournament.id));
+      setDeleteTarget(null);
     } catch (apiError) {
       setError(apiError instanceof Error ? apiError.message : "Unable to remove schedule item.");
+    } finally {
+      setDeletingScheduleItemId(null);
     }
   };
 
   const removeDay = async (dayNumber: number) => {
     const dayItems = scheduleItems.filter((item) => item.dayNumber === dayNumber);
-    if (dayItems.length > 0 || dayCount <= 1) return;
+    if (dayItems.length > 0 || dayCount <= 1 || deletingDayNumber !== null) return;
 
+    setDeletingDayNumber(dayNumber);
     setError("");
     try {
       const result = await deleteTournamentDay(tournament.id, dayNumber);
-      setData(result.data);
+      setData((current) => mergeTournamentData(current, result.data, tournament.id));
+      setDeleteTarget(null);
     } catch (apiError) {
       setError(apiError instanceof Error ? apiError.message : "Unable to remove day.");
+    } finally {
+      setDeletingDayNumber(null);
     }
+  };
+
+  const describeScheduleItemDelete = (
+    scheduleItem: TournamentScheduleItem,
+    game: AppData["games"][number] | null,
+  ) => {
+    if (game) {
+      return `the game vs ${game.opponentName} from ${tournament.name}`;
+    }
+
+    return `${scheduleItem.label ?? "Bye"} from ${tournament.name}`;
+  };
+
+  const confirmDeleteTarget = () => {
+    if (!deleteTarget) return;
+
+    if (deleteTarget.type === "schedule-item") {
+      void removeScheduleItem(deleteTarget.item);
+      return;
+    }
+
+    void removeDay(deleteTarget.dayNumber);
   };
 
   return (
@@ -343,10 +391,16 @@ function TournamentGamesPanel({
                   {isEditingSchedule && (
                     <button
                       className="ghost-button compact-button"
-                      disabled={dayItems.length > 0 || dayCount <= 1}
-                      onClick={() => removeDay(dayNumber)}
+                      disabled={dayItems.length > 0 || dayCount <= 1 || deletingDayNumber === dayNumber}
+                      onClick={() =>
+                        setDeleteTarget({
+                          type: "day",
+                          dayNumber,
+                          label: `Day ${dayNumber} from ${tournament.name}`,
+                        })
+                      }
                     >
-                      Remove Day
+                      {deletingDayNumber === dayNumber ? "Removing" : "Remove Day"}
                     </button>
                   )}
                 </div>
@@ -362,7 +416,7 @@ function TournamentGamesPanel({
                   {renderDropSlot(dayNumber, 0)}
                   {dayItems.map((item, index) => {
                     const game = item.gameId
-                      ? data.games.find((gameItem) => gameItem.id === item.gameId)
+                      ? data.games.find((gameItem) => gameItem.id === item.gameId) ?? null
                       : null;
 
                     return (
@@ -436,12 +490,17 @@ function TournamentGamesPanel({
                         {isEditingSchedule && (
                           <button
                             className="schedule-remove-button"
+                            disabled={deletingScheduleItemId === item.id}
                             onClick={(event) => {
                               event.stopPropagation();
-                              removeScheduleItem(item);
+                              setDeleteTarget({
+                                type: "schedule-item",
+                                item,
+                                label: describeScheduleItemDelete(item, game),
+                              });
                             }}
                           >
-                            Remove
+                            {deletingScheduleItemId === item.id ? "Removing" : "Remove"}
                           </button>
                         )}
                       </div>
@@ -450,19 +509,35 @@ function TournamentGamesPanel({
                     );
                   })}
                 </div>
-                <div className="schedule-actions">
-                  <button onClick={() => setAddingGameDay(dayNumber)}>Add Game</button>
-                  <button className="ghost-button" onClick={() => addBye(dayNumber)}>
-                    Add Bye
-                  </button>
-                </div>
+                {isEditingSchedule && (
+                  <div className="schedule-actions">
+                    <button onClick={() => setAddingGameDay(dayNumber)}>Add Game</button>
+                    <button className="ghost-button" onClick={() => addBye(dayNumber)}>
+                      Add Bye
+                    </button>
+                  </div>
+                )}
               </section>
             );
           })}
-          <button className="ghost-button compact-button add-day-button" onClick={addDay}>
-            Add Day
-          </button>
+          {isEditingSchedule && (
+            <button className="ghost-button compact-button add-day-button" onClick={addDay}>
+              Add Day
+            </button>
+          )}
         </div>
+      )}
+      {deleteTarget && (
+        <DeleteConfirmationModal
+          itemName={deleteTarget.label}
+          isConfirming={
+            deleteTarget.type === "schedule-item"
+              ? deletingScheduleItemId === deleteTarget.item.id
+              : deletingDayNumber === deleteTarget.dayNumber
+          }
+          onCancel={() => setDeleteTarget(null)}
+          onConfirm={confirmDeleteTarget}
+        />
       )}
     </section>
   );

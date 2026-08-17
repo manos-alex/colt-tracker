@@ -1,4 +1,5 @@
 import { Dispatch, FormEvent, SetStateAction, useRef, useState } from "react";
+import DeleteConfirmationModal from "../components/DeleteConfirmationModal";
 import { createPlayer, deletePlayer, updatePlayer as updateApiPlayer } from "../lib/api";
 import type { AppData, Id, Player } from "../types";
 
@@ -10,6 +11,8 @@ function RosterPage({ data, setData }: { data: AppData; setData: DataSetter }) {
   const [playerName, setPlayerName] = useState("");
   const [rosterPlayer, setRosterPlayer] = useState(true);
   const [isAddingPlayer, setIsAddingPlayer] = useState(false);
+  const [isEditingRoster, setIsEditingRoster] = useState(false);
+  const [playerPendingDelete, setPlayerPendingDelete] = useState<Player | null>(null);
   const [deletingPlayerIds, setDeletingPlayerIds] = useState<Set<Id>>(() => new Set());
   const [error, setError] = useState("");
   const playerMutationVersions = useRef(new Map<Id, number>());
@@ -89,6 +92,7 @@ function RosterPage({ data, setData }: { data: AppData; setData: DataSetter }) {
           initialThrowerId: item.initialThrowerId === playerId ? null : item.initialThrowerId,
         })),
       }));
+      setPlayerPendingDelete(null);
     } catch (apiError) {
       setError(apiError instanceof Error ? apiError.message : "Unable to remove player.");
     } finally {
@@ -117,59 +121,91 @@ function RosterPage({ data, setData }: { data: AppData; setData: DataSetter }) {
 
       <section className="wide-panel">
         {error && <p className="status-banner error">{error}</p>}
-        <form className="roster-form" onSubmit={addPlayer}>
-          <input
-            value={playerName}
-            onChange={(event) => setPlayerName(event.target.value)}
-            placeholder="Player name"
-          />
-          <label className="toggle-row">
+        <div className="panel-heading">
+          <h2>Roster</h2>
+          <div className="section-actions">
+            <span>{data.players.length}</span>
+            <button
+              className={isEditingRoster ? "primary-button compact-button" : "ghost-button compact-button"}
+              onClick={() => setIsEditingRoster((current) => !current)}
+            >
+              {isEditingRoster ? "Done" : "Edit"}
+            </button>
+          </div>
+        </div>
+        {isEditingRoster && (
+          <form className="roster-form" onSubmit={addPlayer}>
             <input
-              type="checkbox"
-              checked={rosterPlayer}
-              onChange={(event) => setRosterPlayer(event.target.checked)}
+              value={playerName}
+              onChange={(event) => setPlayerName(event.target.value)}
+              placeholder="Player name"
             />
-            <span>Rostered</span>
-          </label>
-          <button type="submit" disabled={isAddingPlayer}>
-            {isAddingPlayer ? "Adding" : "Add Player"}
-          </button>
-        </form>
+            <label className="toggle-row">
+              <input
+                type="checkbox"
+                checked={rosterPlayer}
+                onChange={(event) => setRosterPlayer(event.target.checked)}
+              />
+              <span>Rostered</span>
+            </label>
+            <button type="submit" disabled={isAddingPlayer}>
+              {isAddingPlayer ? "Adding" : "Add Player"}
+            </button>
+          </form>
+        )}
 
-        <div className="table-list">
+        <div className={`table-list roster-list ${isEditingRoster ? "is-editing" : ""}`}>
           <div className="table-header">
             <span>Name</span>
             <span>Rostered</span>
-            <span />
+            {isEditingRoster && <span />}
           </div>
           {data.players.map((player) => (
             <div className="table-row" key={player.id}>
-              <input
-                value={player.name}
-                onChange={(event) => updatePlayer(player.id, { name: event.target.value })}
-                aria-label={`${player.name} name`}
-              />
-              <label className="toggle-row">
+              {isEditingRoster ? (
                 <input
-                  type="checkbox"
-                  checked={player.rosterPlayer}
-                  onChange={(event) =>
-                    updatePlayer(player.id, { rosterPlayer: event.target.checked })
-                  }
+                  value={player.name}
+                  onChange={(event) => updatePlayer(player.id, { name: event.target.value })}
+                  aria-label={`${player.name} name`}
                 />
-                <span>{player.rosterPlayer ? "Yes" : "No"}</span>
-              </label>
-              <button
-                className="ghost-button"
-                disabled={deletingPlayerIds.has(player.id)}
-                onClick={() => void removePlayer(player.id)}
-              >
-                {deletingPlayerIds.has(player.id) ? "Removing" : "Remove"}
-              </button>
+              ) : (
+                <strong className="roster-player-name">{player.name}</strong>
+              )}
+              {isEditingRoster ? (
+                <label className="toggle-row">
+                  <input
+                    type="checkbox"
+                    checked={player.rosterPlayer}
+                    onChange={(event) =>
+                      updatePlayer(player.id, { rosterPlayer: event.target.checked })
+                    }
+                  />
+                  <span>{player.rosterPlayer ? "Yes" : "No"}</span>
+                </label>
+              ) : (
+                <span className="roster-status">{player.rosterPlayer ? "Yes" : "No"}</span>
+              )}
+              {isEditingRoster && (
+                <button
+                  className="schedule-remove-button"
+                  disabled={deletingPlayerIds.has(player.id)}
+                  onClick={() => setPlayerPendingDelete(player)}
+                >
+                  {deletingPlayerIds.has(player.id) ? "Removing" : "Remove"}
+                </button>
+              )}
             </div>
           ))}
         </div>
       </section>
+      {playerPendingDelete && (
+        <DeleteConfirmationModal
+          itemName={`${playerPendingDelete.name} from roster`}
+          isConfirming={deletingPlayerIds.has(playerPendingDelete.id)}
+          onCancel={() => setPlayerPendingDelete(null)}
+          onConfirm={() => void removePlayer(playerPendingDelete.id)}
+        />
+      )}
     </section>
   );
 }

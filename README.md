@@ -40,6 +40,18 @@ npm run dev
 npm run build
 ```
 
+## Dev Deployment Scripts
+
+```sh
+scripts/deploy-dev-infra.sh
+scripts/deploy-dev-backend.sh
+scripts/deploy-dev-frontend.sh
+scripts/deploy-dev-app.sh
+```
+
+The scripts default to `AWS_PROFILE=colt-dev-deploy` and `AWS_REGION=us-east-1` when those
+environment variables are not already set.
+
 ## Local Backend Environment
 
 Create a repo-root `.env` file for local backend development:
@@ -52,7 +64,15 @@ DB_SECRET_ARN=...
 DB_NAME=colttracker
 ENVIRONMENT=local
 PORT=8787
+ADMIN_SITE_PASSWORD=...
+VIEWER_SITE_PASSWORD=...
+SESSION_SECRET=...
 ```
+
+Use different admin and viewer passwords. `SESSION_SECRET` must be at least 32 characters and should
+be randomly generated. These values stay in the backend environment and are never included in the
+frontend bundle. For Terraform deployments, copy `infra/secrets.auto.tfvars.example` to
+`infra/secrets.auto.tfvars` and set the same three values there; that file is gitignored.
 
 You can populate the database values from Terraform outputs after the dev stack exists:
 
@@ -67,16 +87,17 @@ Terraform-managed environment variables.
 
 ## Backend API
 
-The frontend hydrates with `GET /api/bootstrap`, which returns the full `AppData` shape. Mutations
-return either the changed resource or a refreshed `AppData` payload.
+The frontend first checks `GET /api/session`. A valid password creates a signed, `HttpOnly` session
+cookie that expires after 24 hours. Viewer sessions can access only `/api/stats/*`; admin sessions
+can use the management routes below. Admin data is loaded and cached by route.
 
 Implemented route groups:
 
 - `GET /api/health`
-- `GET /api/bootstrap`
+- `/api/session`: check, create, or end a session.
 - `/api/players`: create, update, delete, and list players.
-- `/api/tournaments`: create tournaments, roster tournament players, add games/byes, reorder or delete schedule items, and update day counts.
-- `/api/games`: patch game state, start points, record events, finish points, and delete events.
+- `/api/tournaments`: list summaries, load one tournament, manage players, and manage its schedule.
+- `/api/games`: load one game, patch game state, manage points, and manage events.
 
 ## Dev Deployment
 
@@ -100,7 +121,7 @@ Then smoke test:
 
 ```sh
 curl "$(terraform -chdir=infra output -raw api_endpoint)/api/health"
-curl "$(terraform -chdir=infra output -raw api_endpoint)/api/bootstrap"
+curl "$(terraform -chdir=infra output -raw api_endpoint)/api/session"
 ```
 
 ## Architecture

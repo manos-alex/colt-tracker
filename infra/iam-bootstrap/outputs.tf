@@ -12,3 +12,13 @@ output "dev_deploy_role_name" {
   description = "Name of the role to assume for manual dev deployments."
   value       = aws_iam_role.dev_deploy.name
 }
+
+output "prod_deploy_role_arn" {
+  description = "ARN GitHub Actions assumes through OIDC for production deployments."
+  value       = aws_iam_role.prod_deploy.arn
+}
+
+output "prod_deploy_role_name" {
+  description = "Name of the GitHub Actions production deployment role."
+  value       = aws_iam_role.prod_deploy.name
+}

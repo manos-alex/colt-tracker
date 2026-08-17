@@ -26,3 +26,27 @@ variable "attach_administrator_access" {
   type        = bool
   default     = true
 }
+
+variable "github_repository" {
+  description = "GitHub repository allowed to assume the production deploy role, in owner/repository form."
+  type        = string
+  default     = "manos-alex/colt-tracker"
+}
+
+variable "github_environment" {
+  description = "GitHub Actions environment allowed to assume the production deploy role."
+  type        = string
+  default     = "production"
+}
+
+variable "prod_deploy_role_name" {
+  description = "Name of the GitHub Actions role used for production deployments."
+  type        = string
+  default     = "ColtTrackerProdDeployRole"
+}
+
+variable "attach_prod_administrator_access" {
+  description = "Attach AdministratorAccess to the production deploy role while the Terraform stack is being established."
+  type        = bool
+  default     = true
+}

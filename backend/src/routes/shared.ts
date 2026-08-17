@@ -1,6 +1,5 @@
 import type { AppData, EventType, FieldCoordinate, Game, Id, Possession } from "../../../src/types.js";
 import { executeSql, sqlParam, withTransaction } from "../db/dataApi.js";
-import { getBootstrapData } from "./bootstrap.js";
 
 export type ValidationError = {
   error: string;
@@ -33,9 +32,10 @@ export const eventTypes = new Set<EventType>([
 
 export async function mutateAndReturnData(
   mutation: (transactionId: string) => Promise<void>,
+  loadData: () => Promise<AppData>,
 ): Promise<MutationResult> {
   await withTransaction(mutation);
-  return { data: await getBootstrapData() };
+  return { data: await loadData() };
 }
 
 export function isObject(value: unknown): value is Record<string, unknown> {
