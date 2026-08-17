@@ -18,12 +18,10 @@ The committed `environments/prod.tfvars` controls production sizing. The current
 - Aurora Serverless v2: `0` minimum and `1` maximum ACUs, with auto-pause after 5 idle minutes
 - Database deletion protection: enabled
 
-The generated production CloudFront domain is `https://d2xetjjktw3gp.cloudfront.net`, and
-`environments/prod.tfvars` uses it as the API Gateway CORS origin. Browser API calls use this same
-CloudFront origin.
-
-Custom DNS is not part of the current Terraform stack. Adding a domain requires an ACM certificate
-in `us-east-1`, a CloudFront alias, and DNS validation/records (usually Route 53).
+The canonical production URL is `https://colttracker.com`. Terraform requests and DNS-validates its
+ACM certificate, attaches the domain to CloudFront, creates the Route 53 alias, and uses the same
+origin for API Gateway CORS. The generated `https://d2xetjjktw3gp.cloudfront.net` hostname remains
+available as CloudFront's underlying distribution domain.
 
 ## 2. Bootstrap Remote Terraform State In AWS
 

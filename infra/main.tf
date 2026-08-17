@@ -17,11 +17,20 @@ data "aws_cloudfront_origin_request_policy" "api_gateway" {
 }
 
 locals {
-  name_prefix        = substr(replace(lower("${var.project_name}-${var.environment}"), "/[^a-z0-9-]/", "-"), 0, 40)
-  frontend_origin_id = "${local.name_prefix}-frontend"
-  api_origin_id      = "${local.name_prefix}-api"
-  az_names           = slice(data.aws_availability_zones.available.names, 0, 2)
-  migration_files    = sort(fileset("${path.module}/migrations", "*.sql"))
+  name_prefix                = substr(replace(lower("${var.project_name}-${var.environment}"), "/[^a-z0-9-]/", "-"), 0, 40)
+  frontend_origin_id         = "${local.name_prefix}-frontend"
+  api_origin_id              = "${local.name_prefix}-api"
+  az_names                   = slice(data.aws_availability_zones.available.names, 0, 2)
+  migration_files            = sort(fileset("${path.module}/migrations", "*.sql"))
+  frontend_has_custom_domain = var.frontend_domain_name != ""
+
+  frontend_certificate_validation_options = local.frontend_has_custom_domain ? {
+    for option in aws_acm_certificate.frontend[0].domain_validation_options : option.domain_name => {
+      name   = option.resource_record_name
+      record = option.resource_record_value
+      type   = option.resource_record_type
+    }
+  } : {}
 
   tags = {
     Application = var.project_name
@@ -81,10 +90,39 @@ resource "aws_cloudfront_origin_access_control" "frontend" {
   signing_protocol                  = "sigv4"
 }
 
+resource "aws_acm_certificate" "frontend" {
+  count = local.frontend_has_custom_domain ? 1 : 0
+
+  domain_name       = var.frontend_domain_name
+  validation_method = "DNS"
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+resource "aws_route53_record" "frontend_certificate_validation" {
+  for_each = local.frontend_certificate_validation_options
+
+  zone_id = var.frontend_hosted_zone_id
+  name    = each.value.name
+  type    = each.value.type
+  ttl     = 60
+  records = [each.value.record]
+}
+
+resource "aws_acm_certificate_validation" "frontend" {
+  count = local.frontend_has_custom_domain ? 1 : 0
+
+  certificate_arn         = aws_acm_certificate.frontend[0].arn
+  validation_record_fqdns = [for record in aws_route53_record.frontend_certificate_validation : record.fqdn]
+}
+
 resource "aws_cloudfront_distribution" "frontend" {
   enabled             = true
   comment             = "${var.project_name} ${var.environment} frontend"
   default_root_object = "index.html"
+  aliases             = local.frontend_has_custom_domain ? [var.frontend_domain_name] : []
 
   origin {
     domain_name              = aws_s3_bucket.frontend.bucket_regional_domain_name
@@ -143,7 +181,24 @@ resource "aws_cloudfront_distribution" "frontend" {
   }
 
   viewer_certificate {
-    cloudfront_default_certificate = true
+    acm_certificate_arn            = local.frontend_has_custom_domain ? aws_acm_certificate_validation.frontend[0].certificate_arn : null
+    cloudfront_default_certificate = !local.frontend_has_custom_domain
+    minimum_protocol_version       = local.frontend_has_custom_domain ? "TLSv1.2_2021" : null
+    ssl_support_method             = local.frontend_has_custom_domain ? "sni-only" : null
+  }
+}
+
+resource "aws_route53_record" "frontend_alias" {
+  count = local.frontend_has_custom_domain ? 1 : 0
+
+  zone_id = var.frontend_hosted_zone_id
+  name    = var.frontend_domain_name
+  type    = "A"
+
+  alias {
+    name                   = aws_cloudfront_distribution.frontend.domain_name
+    zone_id                = aws_cloudfront_distribution.frontend.hosted_zone_id
+    evaluate_target_health = false
   }
 }
 
