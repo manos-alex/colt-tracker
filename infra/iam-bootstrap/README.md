@@ -6,8 +6,8 @@ This stack creates the IAM roles used for deployments:
 - `ColtTrackerProdDeployRole`
 
 It also creates the GitHub Actions OIDC provider. The production role trust policy accepts only
-tokens for the `manos-alex/colt-tracker` repository and its `production` GitHub environment. GitHub
-receives short-lived AWS credentials; do not create access keys for CI/CD.
+tokens for the Colt Tracker repository's immutable owner/repository IDs and its `production` GitHub
+environment. GitHub receives short-lived AWS credentials; do not create access keys for CI/CD.
 
 The role is Terraform-managed to avoid console-created drift. You still need to run this bootstrap
 stack once with credentials that can create IAM roles and policies.

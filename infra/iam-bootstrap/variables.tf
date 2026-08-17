@@ -28,9 +28,9 @@ variable "attach_administrator_access" {
 }
 
 variable "github_repository" {
-  description = "GitHub repository allowed to assume the production deploy role, in owner/repository form."
+  description = "GitHub repository subject allowed to assume the production deploy role, including immutable owner and repository IDs when configured."
   type        = string
-  default     = "manos-alex/colt-tracker"
+  default     = "manos-alex@142343937/colt-tracker@1311105686"
 }
 
 variable "github_environment" {
